@@ -1,0 +1,1081 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>钢板余料识别 DXF 生成</title>
+  <style>
+    :root {
+      --bg: #f6f7fb;
+      --card: #ffffff;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --border: #e5e7eb;
+      --primary: #2563eb;
+      --primary-dark: #1d4ed8;
+      --danger: #dc2626;
+      --ok: #16a34a;
+      --code-bg: #111827;
+      --code-text: #e5e7eb;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Arial, "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    header {
+      padding: 24px 32px;
+      background: linear-gradient(135deg, #1e40af, #2563eb);
+      color: #fff;
+    }
+
+    header h1 {
+      margin: 0 0 8px;
+      font-size: 24px;
+      font-weight: 700;
+    }
+
+    header p {
+      margin: 0;
+      opacity: .9;
+      font-size: 14px;
+    }
+
+    main {
+      max-width: 1280px;
+      margin: 24px auto;
+      padding: 0 18px 40px;
+      display: grid;
+      grid-template-columns: minmax(360px, 480px) 1fr;
+      gap: 18px;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: 0 8px 24px rgba(15, 23, 42, .06);
+      overflow: hidden;
+    }
+
+    .card-title {
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--border);
+      font-size: 16px;
+      font-weight: 700;
+    }
+
+    .card-body { padding: 18px; }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .field.full { grid-column: 1 / -1; }
+
+    label {
+      font-size: 13px;
+      font-weight: 600;
+      color: #374151;
+    }
+
+    input, select, button, textarea { font: inherit; }
+
+    input, select, textarea {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 11px;
+      outline: none;
+      background: #fff;
+      color: var(--text);
+    }
+
+    input:focus, select:focus, textarea:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, .12);
+    }
+
+    textarea {
+      min-height: 72px;
+      resize: vertical;
+    }
+
+    .hint {
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
+    .checkbox-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 40px;
+    }
+
+    .checkbox-row input { width: auto; }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    button {
+      border: none;
+      border-radius: 10px;
+      padding: 11px 16px;
+      cursor: pointer;
+      font-weight: 700;
+    }
+
+    .btn-primary {
+      background: var(--primary);
+      color: #fff;
+      flex: 1;
+    }
+
+    .btn-primary:hover { background: var(--primary-dark); }
+
+    .btn-secondary {
+      background: #eef2ff;
+      color: #1e40af;
+    }
+
+    .btn-small {
+      padding: 8px 10px;
+      font-size: 12px;
+      border-radius: 8px;
+      background: #eef2ff;
+      color: #1e40af;
+    }
+
+    .btn-small.active {
+      background: var(--primary);
+      color: #fff;
+    }
+
+    .btn-link {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      text-decoration: none;
+      border-radius: 10px;
+      padding: 10px 14px;
+      background: var(--ok);
+      color: #fff;
+      font-weight: 700;
+      margin-right: 8px;
+      margin-top: 8px;
+    }
+
+    .btn-link.secondary { background: #475569; }
+
+    .status {
+      margin-top: 14px;
+      padding: 12px;
+      border-radius: 10px;
+      background: #f3f4f6;
+      color: #374151;
+      font-size: 13px;
+      white-space: pre-wrap;
+    }
+
+    .status.ok {
+      background: #ecfdf5;
+      color: #166534;
+    }
+
+    .status.error {
+      background: #fef2f2;
+      color: var(--danger);
+    }
+
+    .preview-box {
+      border: 1px dashed #cbd5e1;
+      border-radius: 12px;
+      min-height: 180px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      background: #f8fafc;
+      position: relative;
+    }
+
+    .preview-wrap {
+      position: relative;
+      display: inline-block;
+      max-width: 100%;
+    }
+
+    .preview-wrap img {
+      max-width: 100%;
+      max-height: 360px;
+      display: block;
+      cursor: crosshair;
+    }
+
+    .point-marker {
+      position: absolute;
+      width: 18px;
+      height: 18px;
+      border: 3px solid #ef4444;
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(239, 68, 68, .18);
+      box-shadow: 0 0 0 4px rgba(239, 68, 68, .16);
+      pointer-events: none;
+    }
+
+    .paper-marker {
+      position: absolute;
+      width: 20px;
+      height: 20px;
+      border: 3px solid #22c55e;
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(34, 197, 94, .18);
+      color: #064e3b;
+      font-size: 11px;
+      font-weight: 800;
+      line-height: 15px;
+      text-align: center;
+      pointer-events: none;
+    }
+
+    .point-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(120px, 1fr));
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .metric {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+      background: #fafafa;
+    }
+
+    .metric .name {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 5px;
+    }
+
+    .metric .value {
+      font-size: 18px;
+      font-weight: 800;
+    }
+
+    .paths {
+      display: grid;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .path-row {
+      display: grid;
+      grid-template-columns: 170px 1fr auto;
+      gap: 8px;
+      align-items: center;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px 10px;
+      background: #fff;
+    }
+
+    .path-key {
+      font-size: 12px;
+      font-weight: 700;
+      color: #334155;
+      word-break: break-all;
+    }
+
+    .path-value {
+      font-size: 12px;
+      color: var(--muted);
+      overflow-wrap: anywhere;
+    }
+
+    .small-link {
+      color: var(--primary);
+      font-size: 12px;
+      font-weight: 700;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+
+    .image-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(220px, 1fr));
+      gap: 12px;
+      margin-top: 14px;
+    }
+
+    .result-image {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 10px;
+      background: #fff;
+    }
+
+    .result-image h3 {
+      margin: 0 0 8px;
+      font-size: 13px;
+      color: #334155;
+    }
+
+    .result-image img {
+      width: 100%;
+      max-height: 360px;
+      object-fit: contain;
+      background: #f8fafc;
+      border-radius: 8px;
+    }
+
+    .tune-panel {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+      background: #fafafa;
+    }
+
+    .tune-title {
+      font-size: 14px;
+      font-weight: 800;
+      margin-bottom: 10px;
+      color: #374151;
+    }
+
+    .tune-row {
+      margin-bottom: 12px;
+    }
+
+    .tune-row label {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 6px;
+      color: var(--muted);
+    }
+
+    .tune-row strong {
+      color: var(--primary-dark);
+    }
+
+    .tune-row input[type="range"] {
+      padding: 0;
+    }
+
+    .notch-preview {
+      width: 100%;
+      height: 120px;
+      border: 1px dashed #cbd5e1;
+      border-radius: 10px;
+      background: #fff;
+      margin-bottom: 12px;
+    }
+
+    pre {
+      margin: 14px 0 0;
+      padding: 14px;
+      background: var(--code-bg);
+      color: var(--code-text);
+      border-radius: 12px;
+      overflow: auto;
+      max-height: 420px;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .empty {
+      color: var(--muted);
+      font-size: 14px;
+      padding: 20px;
+      text-align: center;
+    }
+
+    @media (max-width: 980px) {
+      main { grid-template-columns: 1fr; }
+      .summary-grid { grid-template-columns: repeat(2, 1fr); }
+      .image-grid { grid-template-columns: 1fr; }
+      .path-row { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>钢板余料识别与 DXF 生成</h1>
+    <p>上传图片后调用 /measure 接口，返回 DXF、mask、debug 图和 result.json 路径。</p>
+  </header>
+
+  <main>
+    <section class="card">
+      <div class="card-title">请求参数</div>
+      <div class="card-body">
+        <form id="measureForm">
+          <div class="form-grid">
+            <div class="field full">
+              <label for="serviceBase">服务地址</label>
+              <input id="serviceBase" name="serviceBase" placeholder="http://127.0.0.1:8000" />
+              <div class="hint">页面部署在同一个服务下时可以留空，默认使用当前地址。</div>
+            </div>
+
+            <div class="field full">
+              <label for="token">请求头 Token</label>
+              <input id="token" name="token" placeholder="X-Auth-Token" required />
+            </div>
+
+            <div class="field full">
+              <label for="image">图片</label>
+              <input id="image" name="image" type="file" accept="image/*" required />
+            </div>
+
+            <div class="field full">
+              <div class="preview-box" id="previewBox">
+                <span class="hint">选择图片后这里会显示预览</span>
+              </div>
+
+              <div class="point-toolbar">
+                <button type="button" class="btn-small" id="selectPlatePointBtn">选择钢板辅助点</button>
+                <button type="button" class="btn-small" id="selectPaperPointsBtn">选择A4四角</button>
+                <button type="button" class="btn-small" id="clearPlatePointBtn">清空钢板点</button>
+                <button type="button" class="btn-small" id="clearPaperPointsBtn">清空A4点</button>
+              </div>
+
+              <div class="hint" id="pointHint">
+                选择图片后，可点击图片设置钢板辅助点或A4四角。A4四角需要点4次。
+              </div>
+            </div>
+
+            <div class="field">
+              <label for="a4_orientation">A4方向</label>
+              <select id="a4_orientation" name="a4_orientation">
+                <option value="auto" selected>auto</option>
+                <option value="landscape">landscape</option>
+                <option value="portrait">portrait</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="paper_source">paper来源</label>
+              <select id="paper_source" name="paper_source">
+                <option value="yolo" selected>yolo</option>
+                <option value="sam2">sam2</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="plate_class">钢板类别</label>
+              <input id="plate_class" name="plate_class" value="plate" />
+            </div>
+
+            <div class="field">
+              <label for="paper_class">A4类别</label>
+              <input id="paper_class" name="paper_class" value="paper" />
+            </div>
+
+            <div class="field">
+              <label for="imgsz">YOLO imgsz</label>
+              <input id="imgsz" name="imgsz" type="number" value="1280" min="320" step="32" />
+            </div>
+
+            <div class="field">
+              <label for="conf">YOLO conf</label>
+              <input id="conf" name="conf" type="number" value="0.35" min="0" max="1" step="0.01" />
+            </div>
+
+            <div class="field">
+              <label for="sam_model">SAM2模型</label>
+              <input id="sam_model" name="sam_model" value="sam2" />
+            </div>
+
+            <div class="field">
+              <label for="yolo_input_mode">YOLO输入模式</label>
+              <select id="yolo_input_mode" name="yolo_input_mode">
+                <option value="canonical_path" selected>canonical_path</option>
+                <option value="rgb_array">rgb_array</option>
+                <option value="bgr_array">bgr_array</option>
+              </select>
+            </div>
+
+            <div class="field full">
+              <label for="model_path">YOLO模型路径，可选</label>
+              <input id="model_path" name="model_path" placeholder="不填则使用服务端 YOLO_MODEL_PATH" />
+            </div>
+
+            <div class="field full">
+              <label for="user_point_ratio">手动钢板点，可选</label>
+              <input id="user_point_ratio" name="user_point_ratio" placeholder="例如 0.5,0.5" />
+              <div class="hint">点击“选择钢板辅助点”后，在图片上点钢板内部位置，会自动填入这里。</div>
+            </div>
+
+            <div class="field full">
+              <label for="paper_points">A4四角坐标，可选</label>
+              <textarea id="paper_points" name="paper_points" placeholder="x1,y1;x2,y2;x3,y3;x4,y4"></textarea>
+              <div class="hint">点击“选择A4四角”后，在图片上依次点4个A4角，会自动填入这里。</div>
+            </div>
+
+            <div class="field">
+              <label for="paper_rect_mode">A4四角拟合</label>
+              <select id="paper_rect_mode" name="paper_rect_mode">
+                <option value="approx_poly" selected>approx_poly</option>
+                <option value="robust_fit">robust_fit</option>
+                <option value="min_area_rect">min_area_rect</option>
+                <option value="raw">raw</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="simplify_mm">DXF简化mm</label>
+              <input id="simplify_mm" name="simplify_mm" type="number" value="3.0" min="0" step="0.1" />
+            </div>
+
+            <div class="field">
+              <label for="topdown_mm_per_px">俯视图mm/px</label>
+              <input id="topdown_mm_per_px" name="topdown_mm_per_px" type="number" value="2.0" min="0.1" step="0.1" />
+            </div>
+
+            <div class="field">
+              <label for="topdown_padding_mm">俯视图留白mm</label>
+              <input id="topdown_padding_mm" name="topdown_padding_mm" type="number" value="50.0" min="0" step="1" />
+            </div>
+
+            <div class="field full checkbox-row">
+              <input id="paper_sam2_yolo_fallback" name="paper_sam2_yolo_fallback" type="checkbox" />
+              <label for="paper_sam2_yolo_fallback">paper_source=sam2 失败时退回 YOLO</label>
+            </div>
+
+            <div class="field full">
+              <div class="tune-panel">
+                <label class="checkbox-row">
+                  <input id="enableNotchRepair" type="checkbox" />
+                  <span>启用夹钳凹陷修复</span>
+                </label>
+
+                <div id="notchTuneFields" style="display:none;margin-top:12px;">
+                  <div class="tune-title">夹钳凹陷修复参数</div>
+
+                  <canvas id="notchPreview" class="notch-preview" width="340" height="120"></canvas>
+
+                  <div class="tune-row">
+                    <label>
+                      <span>凹陷最大宽度</span>
+                      <strong><span id="notchWidthValue">130</span> mm</strong>
+                    </label>
+                    <input id="notchWidth" type="range" min="30" max="600" step="10" value="130" />
+                  </div>
+
+                  <div class="tune-row">
+                    <label>
+                      <span>凹陷最大深度</span>
+                      <strong><span id="notchDepthValue">60</span> mm</strong>
+                    </label>
+                    <input id="notchDepth" type="range" min="20" max="250" step="5" value="60" />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="actions">
+            <button class="btn-primary" type="submit" id="submitBtn">上传并生成 DXF</button>
+            <button class="btn-secondary" type="button" id="resetBtn">清空结果</button>
+          </div>
+        </form>
+
+        <div id="status" class="status">等待上传图片。</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-title">识别结果</div>
+      <div class="card-body" id="resultPanel">
+        <div class="empty">还没有结果。</div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const form = document.getElementById('measureForm');
+    const statusBox = document.getElementById('status');
+    const resultPanel = document.getElementById('resultPanel');
+    const submitBtn = document.getElementById('submitBtn');
+    const resetBtn = document.getElementById('resetBtn');
+    const imageInput = document.getElementById('image');
+    const previewBox = document.getElementById('previewBox');
+
+    const selectPlatePointBtn = document.getElementById('selectPlatePointBtn');
+    const selectPaperPointsBtn = document.getElementById('selectPaperPointsBtn');
+    const clearPlatePointBtn = document.getElementById('clearPlatePointBtn');
+    const clearPaperPointsBtn = document.getElementById('clearPaperPointsBtn');
+    const pointHint = document.getElementById('pointHint');
+
+    const enableNotchRepair = document.getElementById('enableNotchRepair');
+    const notchTuneFields = document.getElementById('notchTuneFields');
+    const notchPreview = document.getElementById('notchPreview');
+    const notchWidth = document.getElementById('notchWidth');
+    const notchDepth = document.getElementById('notchDepth');
+    const notchWidthValue = document.getElementById('notchWidthValue');
+    const notchDepthValue = document.getElementById('notchDepthValue');
+
+    let previewObjectUrl = '';
+    let pointMode = 'none';
+    let platePointRatio = null;
+    let paperPointRatios = [];
+
+    const urlLikeImageKeys = new Set([
+      'canonical_image',
+      'paper_mask',
+      'plate_raw_mask',
+      'plate_final_with_paper_fill',
+      'debug_overlay',
+      'debug_mm_preview',
+      'debug_dxf_postprocess_preview',
+      'topdown_image',
+      'topdown_plate_mask',
+      'topdown_overlay'
+    ]);
+
+    function getBaseUrl() {
+      const text = document.getElementById('serviceBase').value.trim();
+      return text ? text.replace(/\/$/, '') : window.location.origin;
+    }
+
+    function setStatus(text, type) {
+      statusBox.className = 'status' + (type ? ' ' + type : '');
+      statusBox.textContent = text;
+    }
+
+    function clearResult() {
+      resultPanel.innerHTML = '<div class="empty">还没有结果。</div>';
+      setStatus('等待上传图片。');
+    }
+
+    function resolveUrl(value) {
+      if (!value) return '';
+      if (/^https?:\/\//i.test(value)) return value;
+      if (value.startsWith('/')) return getBaseUrl() + value;
+      return getBaseUrl() + '/' + value.replace(/^\/+/, '');
+    }
+
+    function appendOptional(formData, name) {
+      const el = document.getElementById(name);
+      if (!el) return;
+      const value = String(el.value || '').trim();
+      if (value !== '') formData.append(name, value);
+    }
+
+    function getPreviewImage() {
+      return document.getElementById('previewImage');
+    }
+
+    function ratioToPixelText(point) {
+      const img = getPreviewImage();
+      if (!img) return '';
+
+      const x = Math.round(point.x * img.naturalWidth);
+      const y = Math.round(point.y * img.naturalHeight);
+      return `${x},${y}`;
+    }
+
+    function syncPointInputs() {
+      if (platePointRatio) {
+        document.getElementById('user_point_ratio').value =
+          `${platePointRatio.x.toFixed(6)},${platePointRatio.y.toFixed(6)}`;
+      }
+
+      if (paperPointRatios.length > 0) {
+        document.getElementById('paper_points').value =
+          paperPointRatios.map(ratioToPixelText).join(';');
+      }
+    }
+
+    function renderPreview() {
+      if (!previewObjectUrl) {
+        previewBox.innerHTML = '<span class="hint">选择图片后这里会显示预览</span>';
+        return;
+      }
+
+      const plateMarker = platePointRatio
+        ? `<div class="point-marker" style="left:${platePointRatio.x * 100}%;top:${platePointRatio.y * 100}%;"></div>`
+        : '';
+
+      const paperMarkers = paperPointRatios.map((p, idx) => {
+        return `<div class="paper-marker" style="left:${p.x * 100}%;top:${p.y * 100}%;">${idx + 1}</div>`;
+      }).join('');
+
+      previewBox.innerHTML = `
+        <div class="preview-wrap">
+          <img id="previewImage" src="${previewObjectUrl}" alt="preview" />
+          ${plateMarker}
+          ${paperMarkers}
+        </div>
+      `;
+
+      const img = getPreviewImage();
+      if (img) {
+        img.onload = syncPointInputs;
+      }
+      syncPointInputs();
+    }
+
+    function setPointMode(mode) {
+      pointMode = mode;
+
+      selectPlatePointBtn.classList.toggle('active', mode === 'plate');
+      selectPaperPointsBtn.classList.toggle('active', mode === 'paper');
+
+      if (mode === 'plate') {
+        pointHint.textContent = '当前模式：选择钢板辅助点。请点击钢板内部任意一点。';
+      } else if (mode === 'paper') {
+        pointHint.textContent = `当前模式：选择A4四角。请依次点击4个角，当前已选 ${paperPointRatios.length}/4。`;
+      } else {
+        pointHint.textContent = '可选择钢板辅助点或A4四角。A4四角需要点4次。';
+      }
+    }
+
+    function handlePreviewClick(event) {
+      const img = getPreviewImage();
+      if (!img) return;
+
+      const rect = img.getBoundingClientRect();
+      const x = (event.clientX - rect.left) / rect.width;
+      const y = (event.clientY - rect.top) / rect.height;
+
+      if (x < 0 || x > 1 || y < 0 || y > 1) return;
+
+      const point = {
+        x: Math.max(0, Math.min(1, x)),
+        y: Math.max(0, Math.min(1, y)),
+      };
+
+      if (pointMode === 'plate') {
+        platePointRatio = point;
+        renderPreview();
+        setStatus(`已选择钢板辅助点：${point.x.toFixed(6)},${point.y.toFixed(6)}`);
+        return;
+      }
+
+      if (pointMode === 'paper') {
+        if (paperPointRatios.length >= 4) {
+          paperPointRatios = [];
+        }
+
+        paperPointRatios.push(point);
+        renderPreview();
+
+        if (paperPointRatios.length >= 4) {
+          setStatus('已选择4个A4角点，已自动填入 paper_points。');
+          setPointMode('none');
+        } else {
+          setStatus(`已选择A4角点 ${paperPointRatios.length}/4。`);
+          setPointMode('paper');
+        }
+      }
+    }
+
+    function buildRequestBody() {
+      const fd = new FormData();
+      const file = imageInput.files[0];
+      if (!file) throw new Error('请先选择图片');
+
+      syncPointInputs();
+
+      fd.append('image', file);
+
+      const alwaysFields = [
+        'yolo_input_mode',
+        'plate_class',
+        'paper_class',
+        'paper_source',
+        'a4_orientation',
+        'paper_rect_mode',
+        'simplify_mm',
+        'topdown_mm_per_px',
+        'topdown_padding_mm'
+      ];
+
+      alwaysFields.forEach(name => fd.append(name, document.getElementById(name).value));
+
+      appendOptional(fd, 'model_path');
+      appendOptional(fd, 'sam_model');
+      appendOptional(fd, 'imgsz');
+      appendOptional(fd, 'conf');
+      appendOptional(fd, 'user_point_ratio');
+      appendOptional(fd, 'paper_points');
+
+      fd.append('paper_sam2_yolo_fallback', document.getElementById('paper_sam2_yolo_fallback').checked ? 'true' : 'false');
+
+      fd.append('dxf_postprocess_enabled', 'true');
+      fd.append('dxf_notch_fill_enabled', enableNotchRepair.checked ? 'true' : 'false');
+
+      if (enableNotchRepair.checked) {
+        fd.append('dxf_notch_fill_max_width_mm', notchWidth.value);
+        fd.append('dxf_notch_fill_max_depth_mm', notchDepth.value);
+      }
+
+      return fd;
+    }
+
+    function metric(name, value) {
+      const v = value === undefined || value === null || value === '' ? '-' : value;
+      return `<div class="metric"><div class="name">${escapeHtml(name)}</div><div class="value">${escapeHtml(String(v))}</div></div>`;
+    }
+
+    function escapeHtml(text) {
+      return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    function renderPaths(urls, paths) {
+      const keys = Object.keys(paths || {});
+      if (!keys.length) return '<div class="empty">没有返回路径。</div>';
+
+      return `<div class="paths">${keys.map(key => {
+        const pathValue = paths[key];
+        const urlValue = urls && urls[key] ? resolveUrl(urls[key]) : '';
+        const openLink = urlValue ? `<a class="small-link" href="${escapeHtml(urlValue)}" target="_blank">打开</a>` : '';
+        return `
+          <div class="path-row">
+            <div class="path-key">${escapeHtml(key)}</div>
+            <div class="path-value">${escapeHtml(pathValue)}</div>
+            <div>${openLink}</div>
+          </div>`;
+      }).join('')}</div>`;
+    }
+
+    function renderImages(urls) {
+      if (!urls) return '';
+      const items = Object.entries(urls).filter(([key]) => urlLikeImageKeys.has(key));
+      if (!items.length) return '';
+
+      return `<div class="image-grid">${items.map(([key, url]) => {
+        const fullUrl = resolveUrl(url);
+        return `
+          <div class="result-image">
+            <h3>${escapeHtml(key)}</h3>
+            <a href="${escapeHtml(fullUrl)}" target="_blank">
+              <img src="${escapeHtml(fullUrl)}" alt="${escapeHtml(key)}" loading="lazy" />
+            </a>
+          </div>`;
+      }).join('')}</div>`;
+    }
+
+    function renderResult(data) {
+      const dims = data.plate_dimensions || {};
+      const urls = data.urls || {};
+      const paths = data.paths || {};
+      const dxfUrl = urls.dxf ? resolveUrl(urls.dxf) : '';
+      const jsonUrl = urls.result_json ? resolveUrl(urls.result_json) : '';
+
+      const actions = `
+        <div>
+          ${dxfUrl ? `<a class="btn-link" href="${escapeHtml(dxfUrl)}" download>下载 DXF</a>` : ''}
+          ${jsonUrl ? `<a class="btn-link secondary" href="${escapeHtml(jsonUrl)}" download>下载 result.json</a>` : ''}
+        </div>`;
+
+      resultPanel.innerHTML = `
+        <div class="summary-grid">
+          ${metric('长度 mm', dims.length_mm)}
+          ${metric('宽度 mm', dims.width_mm)}
+          ${metric('面积 m2', dims.area_m2)}
+          ${metric('周长 mm', dims.perimeter_mm)}
+        </div>
+        ${actions}
+        <h3 style="font-size:15px;margin:18px 0 8px;">输出路径</h3>
+        ${renderPaths(urls, paths)}
+        ${renderImages(urls)}
+        <h3 style="font-size:15px;margin:18px 0 8px;">完整响应 JSON</h3>
+        <pre>${escapeHtml(JSON.stringify(data, null, 2))}</pre>`;
+    }
+
+    function drawNotchPreview() {
+      if (!notchPreview) return;
+
+      const ctx = notchPreview.getContext('2d');
+      const w = notchPreview.width;
+      const h = notchPreview.height;
+
+      const maxWidth = Number(notchWidth.value);
+      const maxDepth = Number(notchDepth.value);
+
+      notchWidthValue.textContent = maxWidth;
+      notchDepthValue.textContent = maxDepth;
+
+      ctx.clearRect(0, 0, w, h);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, w, h);
+
+      const baseY = 42;
+      const centerX = w / 2;
+
+      const widthPx = Math.min(180, Math.max(40, maxWidth / 3));
+      const depthPx = Math.min(70, Math.max(10, maxDepth / 2.5));
+
+      const leftX = centerX - widthPx / 2;
+      const rightX = centerX + widthPx / 2;
+
+      ctx.strokeStyle = '#d0d7de';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(24, baseY);
+      ctx.lineTo(w - 24, baseY);
+      ctx.stroke();
+
+      ctx.strokeStyle = '#2563eb';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(24, baseY);
+      ctx.lineTo(leftX, baseY);
+      ctx.lineTo(leftX + widthPx * 0.25, baseY + depthPx);
+      ctx.lineTo(rightX - widthPx * 0.25, baseY + depthPx);
+      ctx.lineTo(rightX, baseY);
+      ctx.lineTo(w - 24, baseY);
+      ctx.stroke();
+
+      ctx.strokeStyle = '#ff2d2d';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath();
+      ctx.moveTo(leftX, baseY);
+      ctx.lineTo(rightX, baseY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      ctx.fillStyle = '#667085';
+      ctx.font = '12px Arial';
+      ctx.fillText(`最大宽度 ${maxWidth}mm`, 12, h - 30);
+      ctx.fillText(`最大深度 ${maxDepth}mm`, 12, h - 12);
+
+      ctx.fillStyle = '#1d4ed8';
+      ctx.fillText('红线表示修复后的直边', w - 150, h - 12);
+    }
+
+    imageInput.addEventListener('change', () => {
+      const file = imageInput.files[0];
+
+      if (!file) {
+        previewBox.innerHTML = '<span class="hint">选择图片后这里会显示预览</span>';
+        previewObjectUrl = '';
+        platePointRatio = null;
+        paperPointRatios = [];
+        return;
+      }
+
+      if (previewObjectUrl) {
+        URL.revokeObjectURL(previewObjectUrl);
+      }
+
+      previewObjectUrl = URL.createObjectURL(file);
+      platePointRatio = null;
+      paperPointRatios = [];
+      document.getElementById('user_point_ratio').value = '';
+      document.getElementById('paper_points').value = '';
+
+      renderPreview();
+      setStatus('图片已选择。可以点击图片设置钢板辅助点或A4四角。');
+    });
+
+    previewBox.addEventListener('click', handlePreviewClick);
+
+    selectPlatePointBtn.addEventListener('click', () => setPointMode('plate'));
+    selectPaperPointsBtn.addEventListener('click', () => setPointMode('paper'));
+
+    clearPlatePointBtn.addEventListener('click', () => {
+      platePointRatio = null;
+      document.getElementById('user_point_ratio').value = '';
+      renderPreview();
+      setStatus('已清空钢板辅助点。');
+    });
+
+    clearPaperPointsBtn.addEventListener('click', () => {
+      paperPointRatios = [];
+      document.getElementById('paper_points').value = '';
+      renderPreview();
+      setStatus('已清空A4四角点。');
+      setPointMode('none');
+    });
+
+    enableNotchRepair.addEventListener('change', () => {
+      notchTuneFields.style.display = enableNotchRepair.checked ? 'block' : 'none';
+
+      if (enableNotchRepair.checked) {
+        drawNotchPreview();
+      }
+    });
+
+    [notchWidth, notchDepth].forEach(el => {
+      el.addEventListener('input', drawNotchPreview);
+    });
+
+    resetBtn.addEventListener('click', clearResult);
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = '处理中...';
+      setStatus('图片已上传，正在识别并生成 DXF。');
+
+      try {
+        const token = document.getElementById('token').value.trim();
+        if (!token) throw new Error('请填写请求头 Token');
+
+        const response = await fetch(getBaseUrl() + '/measure', {
+          method: 'POST',
+          headers: { 'X-Auth-Token': token },
+          body: buildRequestBody()
+        });
+
+        const contentType = response.headers.get('content-type') || '';
+        const data = contentType.includes('application/json') ? await response.json() : await response.text();
+
+        if (!response.ok) {
+          const message = typeof data === 'string' ? data : (data.detail || JSON.stringify(data));
+          throw new Error(message);
+        }
+
+        renderResult(data);
+        setStatus('处理完成。', 'ok');
+      } catch (error) {
+        resultPanel.innerHTML = `<pre>${escapeHtml(String(error && error.message ? error.message : error))}</pre>`;
+        setStatus('处理失败：' + (error && error.message ? error.message : error), 'error');
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = '上传并生成 DXF';
+      }
+    });
+
+    document.getElementById('serviceBase').value = window.location.origin;
+    document.getElementById('token').value = 'tk_c2VjcmV0LXJhbmRvbS10b2tlbi0xMjM0NTY3OA';
+  </script>
+</body>
+</html>

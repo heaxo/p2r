@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>A4纸透视矫正 Demo</title>
+    <style>
+        body {
+            font-family: Arial, "Microsoft YaHei", sans-serif;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+
+        .panel {
+            background: #fff;
+            padding: 16px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            box-shadow: 0 2px 8px rgba(0,0,0,.08);
+        }
+
+        #imageWrap {
+            position: relative;
+            display: inline-block;
+            max-width: 100%;
+            border: 1px solid #ccc;
+            background: #222;
+        }
+
+        #previewImg {
+            display: block;
+            max-width: 100%;
+            height: auto;
+        }
+
+        #pointCanvas {
+            position: absolute;
+            left: 0;
+            top: 0;
+            cursor: crosshair;
+        }
+
+        button {
+            padding: 8px 16px;
+            margin-right: 8px;
+            cursor: pointer;
+        }
+
+        input[type="number"] {
+            width: 80px;
+            padding: 6px;
+        }
+
+        .tips {
+            color: #666;
+            font-size: 14px;
+            line-height: 1.7;
+        }
+
+        .point-list {
+            font-size: 14px;
+            background: #f8f8f8;
+            padding: 8px;
+            border-radius: 6px;
+            white-space: pre-wrap;
+        }
+
+        img.result {
+            max-width: 100%;
+            border: 1px solid #ccc;
+            margin-top: 10px;
+        }
+
+        .error {
+            color: red;
+        }
+
+        .success {
+            color: green;
+        }
+    </style>
+</head>
+<body>
+
+<div class="panel">
+    <h2>A4纸透视矫正 Demo</h2>
+
+    <div class="tips">
+        操作步骤：<br>
+        1. 上传图片；<br>
+        2. 在图片上点击 A4 纸的 4 个角；<br>
+        3. 点击“开始透视矫正”；<br>
+        4. 查看并下载矫正后的图片。<br><br>
+
+        注意：4个点不用严格按顺序点，后端会自动排序。但建议尽量点准 A4 的真实四个角。
+    </div>
+</div>
+
+<div class="panel">
+    <input type="file" id="fileInput" accept="image/*">
+    <button onclick="uploadImage()">上传图片</button>
+
+    <label>
+        输出精度 px/mm：
+        <input type="number" id="pxPerMm" value="3" step="0.5" min="0.5">
+    </label>
+
+    <button onclick="clearPoints()">清空点</button>
+    <button onclick="rectifyImage()">开始透视矫正</button>
+</div>
+
+<div class="panel">
+    <div id="imageWrap" style="display:none;">
+        <img id="previewImg">
+        <canvas id="pointCanvas"></canvas>
+    </div>
+</div>
+
+<div class="panel">
+    <h3>已选择点位</h3>
+    <div id="pointList" class="point-list">暂无</div>
+</div>
+
+<div class="panel">
+    <h3>处理结果</h3>
+    <div id="status"></div>
+    <div id="resultArea"></div>
+</div>
+
+<script>
+    let currentFilename = null;
+    let originalWidth = 0;
+    let originalHeight = 0;
+    let points = [];
+
+    const img = document.getElementById("previewImg");
+    const canvas = document.getElementById("pointCanvas");
+    const ctx = canvas.getContext("2d");
+
+    img.onload = function () {
+        resizeCanvasToImage();
+        drawPoints();
+    };
+
+    window.addEventListener("resize", () => {
+        resizeCanvasToImage();
+        drawPoints();
+    });
+
+    function resizeCanvasToImage() {
+        const rect = img.getBoundingClientRect();
+        canvas.width = rect.width;
+        canvas.height = rect.height;
+        canvas.style.width = rect.width + "px";
+        canvas.style.height = rect.height + "px";
+    }
+
+    canvas.addEventListener("click", function (e) {
+        if (!currentFilename) {
+            alert("请先上传图片");
+            return;
+        }
+
+        if (points.length >= 4) {
+            alert("已经选择了4个点，如需重选请点击清空点");
+            return;
+        }
+
+        const rect = canvas.getBoundingClientRect();
+
+        const displayX = e.clientX - rect.left;
+        const displayY = e.clientY - rect.top;
+
+        const x = displayX * originalWidth / rect.width;
+        const y = displayY * originalHeight / rect.height;
+
+        points.push({
+            x: x,
+            y: y
+        });
+
+        drawPoints();
+        updatePointList();
+    });
+
+    function drawPoints() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        if (!originalWidth || !originalHeight) {
+            return;
+        }
+
+        const scaleX = canvas.width / originalWidth;
+        const scaleY = canvas.height / originalHeight;
+
+        ctx.lineWidth = 3;
+        ctx.font = "20px Arial";
+
+        for (let i = 0; i < points.length; i++) {
+            const p = points[i];
+            const x = p.x * scaleX;
+            const y = p.y * scaleY;
+
+            ctx.beginPath();
+            ctx.arc(x, y, 7, 0, Math.PI * 2);
+            ctx.fillStyle = "red";
+            ctx.fill();
+
+            ctx.fillStyle = "yellow";
+            ctx.fillText(String(i + 1), x + 10, y - 10);
+        }
+
+        if (points.length >= 2) {
+            ctx.beginPath();
+
+            for (let i = 0; i < points.length; i++) {
+                const p = points[i];
+                const x = p.x * scaleX;
+                const y = p.y * scaleY;
+
+                if (i === 0) {
+                    ctx.moveTo(x, y);
+                } else {
+                    ctx.lineTo(x, y);
+                }
+            }
+
+            if (points.length === 4) {
+                ctx.closePath();
+            }
+
+            ctx.strokeStyle = "lime";
+            ctx.stroke();
+        }
+    }
+
+    function updatePointList() {
+        const box = document.getElementById("pointList");
+
+        if (points.length === 0) {
+            box.textContent = "暂无";
+            return;
+        }
+
+        box.textContent = points.map((p, i) => {
+            return `${i + 1}: x=${p.x.toFixed(2)}, y=${p.y.toFixed(2)}`;
+        }).join("\n");
+    }
+
+    async function uploadImage() {
+        const fileInput = document.getElementById("fileInput");
+        const file = fileInput.files[0];
+
+        if (!file) {
+            alert("请选择图片");
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append("file", file);
+
+        setStatus("上传中...", "");
+
+        const resp = await fetch("/api/upload", {
+            method: "POST",
+            body: formData
+        });
+
+        const data = await resp.json();
+
+        if (!data.success) {
+            setStatus(data.message, "error");
+            return;
+        }
+
+        currentFilename = data.filename;
+        originalWidth = data.width;
+        originalHeight = data.height;
+        points = [];
+
+        img.src = data.image_url + "?t=" + Date.now();
+        document.getElementById("imageWrap").style.display = "inline-block";
+
+        updatePointList();
+        setStatus("上传成功，请点击 A4 纸四个角", "success");
+        document.getElementById("resultArea").innerHTML = "";
+    }
+
+    function clearPoints() {
+        points = [];
+        drawPoints();
+        updatePointList();
+        setStatus("已清空点位", "");
+    }
+
+    async function rectifyImage() {
+        if (!currentFilename) {
+            alert("请先上传图片");
+            return;
+        }
+
+        if (points.length !== 4) {
+            alert("请点击 A4 纸的 4 个角");
+            return;
+        }
+
+        const pxPerMm = parseFloat(document.getElementById("pxPerMm").value || "3");
+
+        setStatus("正在透视矫正，请稍等...", "");
+
+        const resp = await fetch("/api/rectify", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                filename: currentFilename,
+                points: points.map(p => [p.x, p.y]),
+                px_per_mm: pxPerMm
+            })
+        });
+
+        const data = await resp.json();
+
+        if (!data.success) {
+            setStatus(data.message, "error");
+            return;
+        }
+
+        setStatus("矫正完成", "success");
+
+        const info = data.info;
+
+        document.getElementById("resultArea").innerHTML = `
+            <p>
+                A4方向：${info.orientation}<br>
+                A4尺寸：${info.a4_width_mm}mm × ${info.a4_height_mm}mm<br>
+                输出图片尺寸：${info.output_width_px}px × ${info.output_height_px}px<br>
+                px/mm：${info.px_per_mm.toFixed(4)}
+            </p>
+
+            <p>
+                <a href="${data.download_url}" target="_blank">下载矫正后的图片</a>
+            </p>
+
+            <h4>点位确认图</h4>
+            <img class="result" src="${data.debug_url}?t=${Date.now()}">
+
+            <h4>透视矫正结果</h4>
+            <img class="result" src="${data.result_url}?t=${Date.now()}">
+        `;
+    }
+
+    function setStatus(msg, cls) {
+        const status = document.getElementById("status");
+        status.className = cls || "";
+        status.textContent = msg;
+    }
+</script>
+
+</body>
+</html>

@@ -1,0 +1,1 @@
+pyinstaller --onefile --name=p2r_serve main.py
