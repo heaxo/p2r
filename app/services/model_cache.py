@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from threading import Lock
 
+from loguru import logger
 from ultralytics import YOLO
 
 
@@ -22,8 +23,12 @@ class YoloModelCache:
         with self._lock:
             model = self._models.get(resolved)
             if model is None:
+                logger.info("Loading YOLO model: path={}", resolved)
                 model = YOLO(resolved)
                 self._models[resolved] = model
+                logger.info("YOLO model loaded and cached: path={}", resolved)
+            else:
+                logger.debug("Using cached YOLO model: path={}", resolved)
             return model
 
 

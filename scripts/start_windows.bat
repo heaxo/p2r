@@ -21,6 +21,10 @@ set YOLO_CONF=0.35
 rem Set true to avoid concurrent GPU/SAM2 calls. Keep true first.
 set SERIALIZE_PROCESSING=true
 
+rem Log files rotate at 10 MB, compress old files, and retain 30 days.
+set LOG_DIR=logs
+set LOG_LEVEL=INFO
+
 rem Make Python use UTF-8 mode on Windows.
 set PYTHONUTF8=1
 

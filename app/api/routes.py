@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import traceback
+import time
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from loguru import logger
 from starlette.concurrency import run_in_threadpool
 
 from app.config import get_settings
@@ -28,6 +30,7 @@ def _validate_choice(value: str, allowed: set[str], field_name: str) -> str:
 async def health() -> dict[str, str]:
     """Health check endpoint."""
 
+    logger.debug("Health check requested")
     return {"ok": "true", "service": "plate-measure-http"}
 
 
@@ -57,6 +60,27 @@ async def measure(
 ) -> MeasureResponse:
     """Measure one uploaded image and return generated file paths."""
 
+    started = time.perf_counter()
+    original_filename = image.filename
+    logger.info(
+        "Measure request received: filename={}, model_path={}, sam_model={}, imgsz={}, conf={}, "
+        "yolo_input_mode={}, plate_class={}, paper_class={}, paper_source={}, a4_orientation={}, "
+        "paper_rect_mode={}, simplify_mm={}, dxf_postprocess_enabled={}",
+        original_filename,
+        model_path,
+        sam_model,
+        imgsz,
+        conf,
+        yolo_input_mode,
+        plate_class,
+        paper_class,
+        paper_source,
+        a4_orientation,
+        paper_rect_mode,
+        simplify_mm,
+        dxf_postprocess_enabled,
+    )
+
     _validate_choice(yolo_input_mode, {"canonical_path", "rgb_array", "bgr_array"}, "yolo_input_mode")
     _validate_choice(paper_source, {"yolo", "sam2"}, "paper_source")
     _validate_choice(a4_orientation, {"auto", "landscape", "portrait"}, "a4_orientation")
@@ -64,6 +88,7 @@ async def measure(
 
     try:
         image_path = await service.save_upload(image)
+        logger.info("Upload saved: filename={}, path={}", original_filename, image_path)
         args = await run_in_threadpool(
             service.build_args,
             image_path=image_path,
@@ -89,12 +114,23 @@ async def measure(
             dxf_notch_fill_max_depth_mm=dxf_notch_fill_max_depth_mm,
         )
         result = await run_in_threadpool(service.measure, args)
+        elapsed = time.perf_counter() - started
+        logger.info(
+            "Measure request completed: filename={}, run_dir={}, elapsed_sec={:.3f}, dxf={}",
+            original_filename,
+            result.get("run_dir"),
+            elapsed,
+            (result.get("paths") or {}).get("dxf"),
+        )
         return MeasureResponse(**result)
     except HTTPException:
+        logger.warning("Measure request rejected with HTTPException: filename={}", original_filename)
         raise
     except ValueError as exc:
+        logger.warning("Measure request failed with validation error: filename={}, error={}", original_filename, exc)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except Exception as exc:
         # Keep the HTTP response compact. Full traceback is printed to server log.
         print(traceback.format_exc())
+        logger.exception("Measure request failed: filename={}, error={}", original_filename, exc)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc

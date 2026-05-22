@@ -5,6 +5,9 @@ import json
 import sys
 import traceback
 
+from loguru import logger
+
+from app.config import get_settings
 from app.core.algorithm import (
     DEFAULT_MODEL_PATH,
     DEFAULT_SAM_MODEL_NAME,
@@ -12,6 +15,7 @@ from app.core.algorithm import (
     YOLO_IMGSZ,
     process_one_image,
 )
+from app.logging_config import setup_logging
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="YOLO + SAM2 控制台版：识别钢板和A4纸，基于A4计算钢板尺寸并生成DXF")
@@ -38,12 +42,24 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    setup_logging(get_settings())
     parser = build_arg_parser()
     args = parser.parse_args()
     try:
+        logger.info(
+            "CLI processing started: image={}, model={}, out={}, sam_model={}, imgsz={}, conf={}",
+            args.image,
+            args.model,
+            args.out,
+            args.sam_model,
+            args.imgsz,
+            args.conf,
+        )
         result = process_one_image(args)
+        logger.info("CLI processing completed: image={}, run_dir={}", args.image, result.get("run_dir"))
         print(json.dumps(result, ensure_ascii=False, indent=2))
     except Exception as e:
+        logger.exception("CLI processing failed: image={}, error={}", getattr(args, "image", None), e)
         print(json.dumps({"ok": False, "error": str(e), "traceback": traceback.format_exc(limit=10)}, ensure_ascii=False, indent=2), file=sys.stderr)
         sys.exit(1)
 

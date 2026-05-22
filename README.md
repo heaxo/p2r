@@ -91,6 +91,8 @@ YOLO_IMGSZ=1280
 YOLO_CONF=0.35
 MAX_UPLOAD_MB=80
 SERIALIZE_PROCESSING=true
+LOG_DIR=logs
+LOG_LEVEL=INFO
 HOST=0.0.0.0
 PORT=8000
 ```
@@ -107,8 +109,17 @@ PORT=8000
 | `YOLO_CONF` | `0.35` | 默认 YOLO 置信度 |
 | `MAX_UPLOAD_MB` | `80` | 单张上传图片大小限制 |
 | `SERIALIZE_PROCESSING` | `true` | 是否串行处理推理请求 |
+| `LOG_DIR` | `logs` | 日志输出目录 |
+| `LOG_LEVEL` | `INFO` | 日志级别 |
 | `HOST` | `0.0.0.0` | `run_server.py` 监听地址 |
 | `PORT` | `8000` | `run_server.py` 监听端口 |
+
+日志策略：
+
+- 单个日志文件最大 `10 MB`。
+- 日志保留 `30 days`。
+- 轮转后的旧日志自动压缩为 `zip`。
+- 默认文件名格式为 `logs/app_YYYY-MM-DD.log`。
 
 ## 启动服务
 

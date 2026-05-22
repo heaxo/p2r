@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import time
 import threading
 import uuid
 from pathlib import Path
@@ -10,6 +11,7 @@ from typing import Annotated
 from fastapi import Form
 
 from fastapi import UploadFile
+from loguru import logger
 
 from app.config import Settings
 from app.core.algorithm import IMAGE_EXTS, json_safe, process_one_image
@@ -23,10 +25,17 @@ class MeasureService:
         self.settings = settings
         self.settings.output_root.mkdir(parents=True, exist_ok=True)
         self._process_lock = threading.Lock()
+        logger.info(
+            "MeasureService initialized: output_root={}, max_upload_mb={}, serialize_processing={}",
+            self.settings.output_root,
+            self.settings.max_upload_mb,
+            self.settings.serialize_processing,
+        )
 
     def _safe_suffix(self, filename: str) -> str:
         suffix = Path(filename or "").suffix.lower()
         if suffix not in IMAGE_EXTS:
+            logger.warning("Unsupported image suffix: filename={}, suffix={}", filename, suffix or "unknown")
             raise ValueError(f"不支持的图片格式：{suffix or 'unknown'}")
         return suffix
 
@@ -53,9 +62,16 @@ class MeasureService:
                 if written > max_bytes:
                     f.close()
                     target.unlink(missing_ok=True)
+                    logger.warning(
+                        "Upload exceeded size limit: filename={}, written_bytes={}, max_mb={}",
+                        image.filename,
+                        written,
+                        self.settings.max_upload_mb,
+                    )
                     raise ValueError(f"上传图片超过限制：{self.settings.max_upload_mb}MB")
                 f.write(chunk)
         await image.close()
+        logger.info("Upload persisted: source_filename={}, target={}, size_bytes={}", image.filename, target, written)
         return target
 
     def build_args(
@@ -86,6 +102,18 @@ class MeasureService:
         """Create an args object compatible with process_one_image(args)."""
 
         selected_model_path = Path(model_path) if model_path else self.settings.model_path
+        logger.info(
+            "Building measure args: image_path={}, model_path={}, sam_model={}, imgsz={}, conf={}, "
+            "paper_source={}, a4_orientation={}, paper_rect_mode={}",
+            image_path,
+            selected_model_path,
+            sam_model or self.settings.sam_model,
+            imgsz or self.settings.default_imgsz,
+            conf if conf is not None else self.settings.default_conf,
+            paper_source,
+            a4_orientation,
+            paper_rect_mode,
+        )
         yolo_model = model_cache.get(selected_model_path)
 
         return SimpleNamespace(
@@ -130,6 +158,12 @@ class MeasureService:
 
         paths = dict(result.get("paths") or {})
         urls = {key: url for key, value in paths.items() if (url := self._path_to_url(value))}
+        logger.debug(
+            "Compacting measure result: run_dir={}, path_count={}, url_count={}",
+            result.get("run_dir"),
+            len(paths),
+            len(urls),
+        )
         return {
             "ok": True,
             "run_dir": result.get("run_dir"),
@@ -155,6 +189,25 @@ class MeasureService:
         """
 
         if self.settings.serialize_processing:
+            logger.debug("Waiting for serialized processing lock: image={}", args.image)
             with self._process_lock:
-                return self.compact_result(process_one_image(args))
-        return self.compact_result(process_one_image(args))
+                logger.info("Processing started with serialized lock: image={}", args.image)
+                started = time.perf_counter()
+                result = self.compact_result(process_one_image(args))
+                logger.info(
+                    "Processing finished with serialized lock: image={}, elapsed_sec={:.3f}, run_dir={}",
+                    args.image,
+                    time.perf_counter() - started,
+                    result.get("run_dir"),
+                )
+                return result
+        logger.info("Processing started without serialized lock: image={}", args.image)
+        started = time.perf_counter()
+        result = self.compact_result(process_one_image(args))
+        logger.info(
+            "Processing finished without serialized lock: image={}, elapsed_sec={:.3f}, run_dir={}",
+            args.image,
+            time.perf_counter() - started,
+            result.get("run_dir"),
+        )
+        return result

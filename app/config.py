@@ -19,6 +19,8 @@ class Settings:
     max_upload_mb: int = 80
     static_url_prefix: str = "/files"
     serialize_processing: bool = True
+    log_dir: Path = Path("logs")
+    log_level: str = "INFO"
 
 
 def get_settings() -> Settings:
@@ -38,4 +40,6 @@ def get_settings() -> Settings:
         max_upload_mb=int(os.getenv("MAX_UPLOAD_MB", "80")),
         static_url_prefix=os.getenv("STATIC_URL_PREFIX", "/files"),
         serialize_processing=os.getenv("SERIALIZE_PROCESSING", "true").lower() in {"1", "true", "yes", "y"},
+        log_dir=Path(os.getenv("LOG_DIR", "logs")),
+        log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
     )

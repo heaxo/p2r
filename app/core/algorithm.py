@@ -31,6 +31,7 @@ import json
 import math
 import sys
 import traceback
+import time
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -38,6 +39,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageOps
+from loguru import logger
 from ultralytics import YOLO
 
 
@@ -1766,31 +1768,40 @@ def make_circle_preview_contour_mm(circle: dict, point_count: int = 240) -> np.n
 # 主流程
 # =========================
 def process_one_image(args) -> Dict[str, Any]:
+    started = time.perf_counter()
     image_path = Path(args.image)
+    logger.info("Core process started: image={}, out={}, model={}", image_path, args.out, args.model)
     if not image_path.exists():
+        logger.error("Input image does not exist: {}", image_path)
         raise RuntimeError(f"图片不存在：{image_path}")
 
     out_root = Path(args.out)
     stem = image_path.stem or "image"
     run_dir = out_root / f"{stem}_{uuid.uuid4().hex[:8]}"
     mkdir(run_dir)
+    logger.info("Run directory created: {}", run_dir)
 
     image_rgb = load_image_rgb_from_path(image_path)
+    logger.info("Image loaded: image={}, shape={}", image_path, image_rgb.shape)
 
     # 关键：保存 canonical 中间图；YOLO 和 SAM2 都使用它。
     canonical_image_path = run_dir / "input_canonical_used_by_yolo_and_sam2.png"
     save_image_rgb(image_rgb, canonical_image_path)
     image_rgb = load_image_rgb_from_path(canonical_image_path)
+    logger.info("Canonical image prepared: {}", canonical_image_path)
 
     model_path = Path(args.model)
     if not model_path.exists():
+        logger.error("YOLO model file does not exist: {}", model_path)
         raise RuntimeError(f"YOLO 权重文件不存在：{model_path}")
 
     # HTTP 服务会把已缓存的 YOLO 模型对象放到 args.yolo_model。
     # 控制台模式下没有该字段，则仍按原逻辑从模型文件加载。
     cached_yolo_model = getattr(args, "yolo_model", None)
     model = cached_yolo_model if cached_yolo_model is not None else YOLO(str(model_path))
+    logger.info("YOLO model ready: path={}, cached={}", model_path, cached_yolo_model is not None)
 
+    yolo_started = time.perf_counter()
     result = run_yolo_on_canonical_image(
         model=model,
         image_rgb=image_rgb,
@@ -1799,12 +1810,19 @@ def process_one_image(args) -> Dict[str, Any]:
         imgsz=int(args.imgsz),
         input_mode=args.yolo_input_mode,
     )
+    logger.info(
+        "YOLO inference finished: image={}, elapsed_sec={:.3f}, detected_classes={}",
+        canonical_image_path,
+        time.perf_counter() - yolo_started,
+        detected_class_names(result),
+    )
 
     h, w = image_rgb.shape[:2]
     result_shape = tuple(int(x) for x in result.orig_shape)
     shape_warning = None
     if result_shape != (h, w):
         shape_warning = f"YOLO result.orig_shape={result_shape} 与 image_rgb.shape={(h, w)} 不一致"
+        logger.warning("{}", shape_warning)
 
     mask_paths: Dict[str, str] = {
         "canonical_image": str(canonical_image_path)
@@ -1832,7 +1850,14 @@ def process_one_image(args) -> Dict[str, Any]:
 
     if paper_mask is not None and int((paper_mask > 0).sum()) > 0:
         mask_paths["paper_mask"] = save_mask(paper_mask, run_dir / "paper_mask.png")
+        logger.info(
+            "Paper mask ready: source={}, area_px={}, path={}",
+            args.paper_source,
+            int((paper_mask > 0).sum()),
+            mask_paths["paper_mask"],
+        )
     else:
+        logger.error("Paper mask missing: paper_info={}", paper_info)
         raise RuntimeError(f"未得到 paper mask，无法基于 A4 计算尺寸。paper_info={paper_info}")
 
     # 2. plate：YOLO -> 多点 -> SAM2 / 中心兜底
@@ -1844,12 +1869,22 @@ def process_one_image(args) -> Dict[str, Any]:
         user_point_ratio=args.user_point_ratio,
     )
     mask_paths["plate_raw_mask"] = save_mask(plate_mask, run_dir / "plate_raw_mask.png")
+    logger.info(
+        "Plate raw mask ready: area_px={}, path={}",
+        int((plate_mask > 0).sum()),
+        mask_paths["plate_raw_mask"],
+    )
 
     # 3. final_plate = plate OR paper
     final_plate_mask, fill_info = apply_paper_fill_to_plate_mask(plate_mask, paper_mask)
     mask_paths["plate_final_with_paper_fill"] = save_mask(
         final_plate_mask,
         run_dir / "plate_final_with_paper_fill.png",
+    )
+    logger.info(
+        "Final plate mask ready: area_px={}, path={}",
+        int((final_plate_mask > 0).sum()),
+        mask_paths["plate_final_with_paper_fill"],
     )
 
     # 4. 从 paper mask 或用户指定四角中获取 A4 四角
@@ -1860,6 +1895,7 @@ def process_one_image(args) -> Dict[str, Any]:
             "paper_quad_px_tl_tr_br_bl": np.round(paper_quad_px, 3).tolist(),
         }
         paper_cleaned_mask = _binary_mask(paper_mask)
+        logger.info("Using manual paper points: {}", paper_quad_info["paper_quad_px_tl_tr_br_bl"])
     else:
         paper_quad_px, paper_quad_info, paper_cleaned_mask = find_paper_quad_from_mask(
             paper_mask,
@@ -1885,10 +1921,17 @@ def process_one_image(args) -> Dict[str, Any]:
         paper_quad_info["refine_info"] = refine_info
         paper_quad_px = paper_quad_px_refined
         paper_quad_info["paper_quad_px_tl_tr_br_bl"] = np.round(paper_quad_px, 3).tolist()
+        logger.info(
+            "Paper quad detected and refined: mode={}, orientation={}, quad={}",
+            args.paper_rect_mode,
+            refine_orientation,
+            paper_quad_info["paper_quad_px_tl_tr_br_bl"],
+        )
 
     # 5. 钢板外轮廓 -> mm 坐标
     plate_outer_contour = _largest_contour_from_mask(final_plate_mask)
     if plate_outer_contour is None or len(plate_outer_contour) < 4:
+        logger.error("Plate outer contour extraction failed")
         raise RuntimeError("未能从最终 plate mask 中提取钢板外轮廓")
 
     plate_contour_px = plate_outer_contour.reshape(-1, 2).astype(np.float32)
@@ -1896,6 +1939,12 @@ def process_one_image(args) -> Dict[str, Any]:
     H, paper_quad_mm, a4_size, used_orientation = build_a4_homography(
         paper_quad_px,
         orientation=args.a4_orientation,
+    )
+    logger.info(
+        "A4 homography built: requested_orientation={}, used_orientation={}, a4_size_mm={}",
+        args.a4_orientation,
+        used_orientation,
+        a4_size,
     )
 
     plate_contour_mm_raw = transform_points_px_to_mm(plate_contour_px, H)
@@ -1907,6 +1956,11 @@ def process_one_image(args) -> Dict[str, Any]:
     dxf_path = run_dir / "plate_outer.dxf"
 
     if circle_info["is_circle_like"]:
+        logger.info(
+            "Circle-like plate detected: diameter_mm={:.2f}, circularity={:.4f}",
+            float(circle_info["diameter"]),
+            float(circle_info["circularity"]),
+        )
         # 圆形钢板直接写 DXF CIRCLE，不走折线和后处理。
         write_circle_dxf(
             dxf_path,
@@ -1948,6 +2002,7 @@ def process_one_image(args) -> Dict[str, Any]:
         }
 
     else:
+        logger.info("Non-circle plate contour processing started: raw_points={}", len(plate_contour_mm_raw))
         # 非圆形才走原来的轮廓简化和DXF后处理。
         plate_contour_mm_before_postprocess = simplify_contour_mm(
             plate_contour_mm_raw,
@@ -1964,6 +2019,13 @@ def process_one_image(args) -> Dict[str, Any]:
         plate_contour_mm, dxf_postprocess_info = postprocess_plate_contour_mm(
             contour_mm=plate_contour_mm_before_postprocess,
             config=dxf_postprocess_config,
+        )
+        logger.info(
+            "DXF postprocess finished: enabled={}, original_points={}, processed_points={}, notch_fill_count={}",
+            dxf_postprocess_info.get("enabled"),
+            dxf_postprocess_info.get("original_points"),
+            dxf_postprocess_info.get("processed_points"),
+            dxf_postprocess_info.get("notch_fill_count"),
         )
 
         dxf_postprocess_preview_path = run_dir / "debug_dxf_postprocess_preview.png"
@@ -1983,6 +2045,7 @@ def process_one_image(args) -> Dict[str, Any]:
             plate_contour_mm,
             offset_to_positive=True,
         )
+        logger.info("DXF written: {}", dxf_path)
 
     ENABLE_TOPDOWN_WARP_OUTPUT = True
 
@@ -1997,6 +2060,7 @@ def process_one_image(args) -> Dict[str, Any]:
             padding_mm=args.topdown_padding_mm,
         )
         mask_paths.update(topdown_info["topdown"]["paths"])
+        logger.info("Topdown outputs generated: paths={}", topdown_info["topdown"]["paths"])
     else:
         topdown_info = {
             "topdown": {
@@ -2013,6 +2077,7 @@ def process_one_image(args) -> Dict[str, Any]:
         plate_contour_mm,
         offset_to_positive=True,
     )
+    logger.info("Final DXF written: {}", dxf_path)
 
     debug_overlay_path = run_dir / "debug_overlay.jpg"
     save_debug_overlay(
@@ -2025,6 +2090,7 @@ def process_one_image(args) -> Dict[str, Any]:
         dims,
     )
     mask_paths["debug_overlay"] = str(debug_overlay_path)
+    logger.info("Debug overlay saved: {}", debug_overlay_path)
 
     mm_preview_path = run_dir / "debug_mm_preview.png"
     save_mm_preview(
@@ -2034,6 +2100,7 @@ def process_one_image(args) -> Dict[str, Any]:
         dims,
     )
     mask_paths["debug_mm_preview"] = str(mm_preview_path)
+    logger.info("MM preview saved: {}", mm_preview_path)
 
     result_json_path = run_dir / "result.json"
 
@@ -2096,6 +2163,13 @@ def process_one_image(args) -> Dict[str, Any]:
     result_json_path.write_text(
         json.dumps(json_safe(output), ensure_ascii=False, indent=2),
         encoding="utf-8",
+    )
+    logger.info(
+        "Core process completed: image={}, run_dir={}, elapsed_sec={:.3f}, result_json={}",
+        image_path,
+        run_dir,
+        time.perf_counter() - started,
+        result_json_path,
     )
 
     return json_safe(output)
