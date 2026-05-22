@@ -10,3 +10,4 @@ test/batch_output
 test/batch_yolo_sam2_point_output2
 test/batch_yolo_sam2_point_output3
 test/measure_out
+logs
