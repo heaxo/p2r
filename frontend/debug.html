@@ -904,8 +904,10 @@
 
       resultPanel.innerHTML = `
         <div class="summary-grid">
-          ${metric('长度 mm', dims.length_mm)}
-          ${metric('宽度 mm', dims.width_mm)}
+          ${metric('最大长度 mm', dims.length_mm)}
+          ${metric('最大宽度 mm', dims.width_mm)}
+          ${metric('最小长度 mm', dims.min_length_mm)}
+          ${metric('最小宽度 mm', dims.min_width_mm)}
           ${metric('面积 m2', dims.area_m2)}
           ${metric('周长 mm', dims.perimeter_mm)}
         </div>

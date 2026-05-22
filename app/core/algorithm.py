@@ -1409,6 +1409,85 @@ def simplify_contour_mm(contour_mm: np.ndarray, epsilon_mm: float) -> np.ndarray
     return approx.reshape(-1, 2).astype(np.float32)
 
 
+def _profile_min_spans_on_rect_axes(
+    pts: np.ndarray,
+    box: np.ndarray,
+    length_mm: float,
+    width_mm: float,
+) -> Dict[str, Any]:
+    """
+    Estimate minimum effective length/width for irregular plates.
+
+    Existing length_mm/width_mm are the max envelope from minAreaRect. For
+    stepped or irregular plates, this rasterizes the filled contour in that
+    same rotated-rectangle coordinate system and measures the smallest occupied
+    slice along each axis, ignoring only a tiny edge band to reduce contour
+    noise at corners.
+    """
+
+    ordered_box = np.asarray(box, dtype=np.float32).reshape(4, 2)
+    edges = [ordered_box[(i + 1) % 4] - ordered_box[i] for i in range(4)]
+    edge_lengths = [float(np.linalg.norm(edge)) for edge in edges]
+    if not edge_lengths or max(edge_lengths) <= 1e-6:
+        return {
+            "min_length_mm": round(float(length_mm), 2),
+            "min_width_mm": round(float(width_mm), 2),
+            "method": "fallback_to_max_envelope",
+            "pixel_size_mm": None,
+        }
+
+    length_axis = edges[int(np.argmax(edge_lengths))].astype(np.float32)
+    length_axis = length_axis / max(1e-6, float(np.linalg.norm(length_axis)))
+    width_axis = np.array([-length_axis[1], length_axis[0]], dtype=np.float32)
+
+    uv = np.column_stack([
+        pts @ length_axis,
+        pts @ width_axis,
+    ]).astype(np.float32)
+
+    u_min, v_min = np.min(uv, axis=0)
+    u_max, v_max = np.max(uv, axis=0)
+    span_u = max(1.0, float(u_max - u_min))
+    span_v = max(1.0, float(v_max - v_min))
+    max_span = max(span_u, span_v)
+    pixel_size_mm = max(1.0, max_span / 2400.0)
+    pad_px = 4
+
+    poly = np.empty_like(uv, dtype=np.int32)
+    poly[:, 0] = np.round((uv[:, 0] - u_min) / pixel_size_mm).astype(np.int32) + pad_px
+    poly[:, 1] = np.round((uv[:, 1] - v_min) / pixel_size_mm).astype(np.int32) + pad_px
+    canvas_w = int(np.max(poly[:, 0]) + pad_px + 1)
+    canvas_h = int(np.max(poly[:, 1]) + pad_px + 1)
+    mask = np.zeros((max(1, canvas_h), max(1, canvas_w)), dtype=np.uint8)
+    cv2.fillPoly(mask, [poly.reshape(-1, 1, 2)], 1)
+
+    def min_span_along_rows(binary_mask: np.ndarray) -> float:
+        spans = []
+        rows = np.where(binary_mask.any(axis=1))[0]
+        if rows.size == 0:
+            return 0.0
+
+        trim = int(round(rows.size * 0.02))
+        if rows.size > trim * 2 + 2:
+            rows = rows[trim: rows.size - trim]
+
+        for row in rows:
+            cols = np.where(binary_mask[row] > 0)[0]
+            if cols.size:
+                spans.append(float(cols[-1] - cols[0]) * pixel_size_mm)
+        return min(spans) if spans else 0.0
+
+    min_length = min_span_along_rows(mask)
+    min_width = min_span_along_rows(mask.T)
+
+    return {
+        "min_length_mm": round(max(0.0, float(min_length)), 2),
+        "min_width_mm": round(max(0.0, float(min_width)), 2),
+        "method": "profile_slice_on_min_area_rect_axes",
+        "pixel_size_mm": round(float(pixel_size_mm), 4),
+    }
+
+
 def calc_dimensions(contour_mm: np.ndarray) -> dict:
     pts = np.asarray(contour_mm, dtype=np.float32).reshape(-1, 2)
     x_min = float(np.min(pts[:, 0]))
@@ -1425,10 +1504,18 @@ def calc_dimensions(contour_mm: np.ndarray) -> dict:
     width = min(float(rw), float(rh))
     area = float(abs(cv2.contourArea(pts.reshape(-1, 1, 2))))
     perimeter = float(cv2.arcLength(pts.reshape(-1, 1, 2), True))
+    profile_dims = _profile_min_spans_on_rect_axes(pts, box, length, width)
 
     return {
         "length_mm": round(length, 2),
         "width_mm": round(width, 2),
+        "max_length_mm": round(length, 2),
+        "max_width_mm": round(width, 2),
+        "min_length_mm": profile_dims["min_length_mm"],
+        "min_width_mm": profile_dims["min_width_mm"],
+        "dimension_method": "min_area_rect_max_envelope",
+        "min_dimension_method": profile_dims["method"],
+        "min_dimension_pixel_size_mm": profile_dims["pixel_size_mm"],
         "min_area_rect_length_mm": round(length, 2),
         "min_area_rect_width_mm": round(width, 2),
         "axis_bbox_width_mm": round(float(bbox_w), 2),
@@ -1979,6 +2066,13 @@ def process_one_image(args) -> Dict[str, Any]:
         dims = {
             "length_mm": round(diameter, 2),
             "width_mm": round(diameter, 2),
+            "max_length_mm": round(diameter, 2),
+            "max_width_mm": round(diameter, 2),
+            "min_length_mm": round(diameter, 2),
+            "min_width_mm": round(diameter, 2),
+            "dimension_method": "circle_diameter",
+            "min_dimension_method": "circle_diameter",
+            "min_dimension_pixel_size_mm": None,
             "min_area_rect_length_mm": round(diameter, 2),
             "min_area_rect_width_mm": round(diameter, 2),
             "axis_bbox_width_mm": round(diameter, 2),

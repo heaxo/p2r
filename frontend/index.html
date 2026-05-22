@@ -818,8 +818,10 @@
 
       resultPanel.innerHTML = `
         <div class="metrics">
-          ${metric('长度', dims.length_mm, ' mm')}
-          ${metric('宽度', dims.width_mm, ' mm')}
+          ${metric('最大长度', dims.length_mm, ' mm')}
+          ${metric('最大宽度', dims.width_mm, ' mm')}
+          ${metric('最小长度', dims.min_length_mm, ' mm')}
+          ${metric('最小宽度', dims.min_width_mm, ' mm')}
           ${metric('面积', dims.area_m2, ' m²')}
           ${metric('周长', dims.perimeter_mm, ' mm')}
         </div>
