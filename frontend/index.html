@@ -746,7 +746,8 @@
       fd.append('yolo_input_mode', 'canonical_path');
       fd.append('plate_class', 'plate');
       fd.append('paper_class', 'paper');
-      fd.append('paper_source', 'yolo');
+      // fd.append('paper_source', 'yolo');
+      fd.append('paper_source', 'sam2');
       fd.append('paper_sam2_yolo_fallback', 'false');
       fd.append('a4_orientation', 'auto');
       fd.append('paper_rect_mode', 'approx_poly');
@@ -755,7 +756,7 @@
       fd.append('topdown_padding_mm', '50.0');
       fd.append('imgsz', '1280');
       fd.append('conf', '0.35');
-      fd.append('sam_model', 'sam2');
+      fd.append('sam_model', 'sam2:large');
 
       if (manualPointRatio) {
         fd.append(

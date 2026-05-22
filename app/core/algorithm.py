@@ -1812,7 +1812,8 @@ def process_one_image(args) -> Dict[str, Any]:
 
     # 1. paper：默认直接用 YOLO；可切换成 YOLO -> 点 -> SAM2
     paper_class_names = parse_name_list(args.paper_class) or ["paper"]
-
+    print(f"args.paper_source:{args.paper_source}")
+    print(f"args.sam_model:{args.sam_model}")
     if args.paper_source == "yolo":
         paper_mask, paper_info = run_paper_from_yolo_only(
             result=result,
