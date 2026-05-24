@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import FastAPI
-from fastapi.responses import RedirectResponse
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.config import get_settings
+from app.errors import public_error_message, sanitize_public_error_detail
 from app.logging_config import setup_logging
 
 settings = get_settings()
@@ -26,8 +29,36 @@ from app.api.routes import router
 app = FastAPI(
     title="Plate Measure HTTP Service",
     version="1.2.0",
-    description="YOLO + SAM2 plate measurement service. It returns generated DXF, mask, image and JSON paths.",
+    description="Plate measurement service. It returns generated DXF, mask, image and JSON paths.",
 )
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": sanitize_public_error_detail(exc.detail)},
+        headers=exc.headers,
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    logger.warning("Request validation failed: path={}, errors={}", request.url.path, exc.errors())
+    return JSONResponse(
+        status_code=422,
+        content={"detail": sanitize_public_error_detail(exc.errors())},
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    logger.exception("Unhandled server error: path={}, error={}", request.url.path, exc)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": public_error_message(exc, fallback="服务处理失败")},
+    )
+
 
 app.include_router(router)
 

@@ -16,6 +16,7 @@ from loguru import logger
 from starlette.concurrency import run_in_threadpool
 
 from app.config import get_settings
+from app.errors import public_error_message
 from app.schemas import MeasureResponse
 from app.security import require_token
 from app.services.measure_service import MeasureService
@@ -29,7 +30,7 @@ def _validate_choice(value: str, allowed: set[str], field_name: str) -> str:
     if value not in allowed:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"{field_name} 只能是：{', '.join(sorted(allowed))}",
+            detail=f"{field_name} 参数不正确",
         )
     return value
 
@@ -53,11 +54,11 @@ def _validate_measure_options(
     perspective_source: str,
     paper_rect_mode: str,
 ) -> None:
-    _validate_choice(yolo_input_mode, {"canonical_path", "rgb_array", "bgr_array"}, "yolo_input_mode")
-    _validate_choice(paper_source, {"yolo", "sam2"}, "paper_source")
-    _validate_choice(a4_orientation, {"auto", "landscape", "portrait"}, "a4_orientation")
-    _validate_choice(perspective_source, {"a4", "plate"}, "perspective_source")
-    _validate_choice(paper_rect_mode, {"robust_fit", "approx_poly", "min_area_rect", "raw"}, "paper_rect_mode")
+    _validate_choice(yolo_input_mode, {"canonical_path", "rgb_array", "bgr_array"}, "识别输入模式")
+    _validate_choice(paper_source, {"yolo", "sam2"}, "纸张轮廓来源")
+    _validate_choice(a4_orientation, {"auto", "landscape", "portrait"}, "A4方向")
+    _validate_choice(perspective_source, {"a4", "plate"}, "透视矫正基准")
+    _validate_choice(paper_rect_mode, {"robust_fit", "approx_poly", "min_area_rect", "raw"}, "纸张四角拟合方式")
 
 
 @router.get("/health")
@@ -172,7 +173,7 @@ async def upload_tasks(
                 params=task_params,
             ))
         except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=public_error_message(exc)) from exc
 
     return {"ok": True, "client_id": client_id, "tasks": tasks}
 
@@ -360,9 +361,9 @@ async def measure(
         raise
     except ValueError as exc:
         logger.warning("Measure request failed with validation error: filename={}, error={}", original_filename, exc)
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=public_error_message(exc)) from exc
     except Exception as exc:
         # Keep the HTTP response compact. Full traceback is printed to server log.
         print(traceback.format_exc())
         logger.exception("Measure request failed: filename={}, error={}", original_filename, exc)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=public_error_message(exc)) from exc

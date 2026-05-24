@@ -228,7 +228,7 @@ def run_yolo_on_canonical_image(
     elif mode == "bgr_array":
         source = np.ascontiguousarray(cv2.cvtColor(image_rgb.astype(np.uint8), cv2.COLOR_RGB2BGR))
     else:
-        raise RuntimeError(f"不支持的 yolo_input_mode：{input_mode}，可选 canonical_path/rgb_array/bgr_array")
+        raise RuntimeError(f"不支持的识别输入模式：{input_mode}，可选 canonical_path/rgb_array/bgr_array")
 
     results = model.predict(
         source=source,
@@ -238,7 +238,7 @@ def run_yolo_on_canonical_image(
         retina_masks=True,
     )
     if not results:
-        raise RuntimeError("YOLO 没有返回结果")
+        raise RuntimeError("识别模块没有返回结果")
     return results[0]
 
 
@@ -354,7 +354,7 @@ def get_target_from_yolo_result(result, target_class_name: str = "plate", avoid_
     if avoid_class_names is None:
         avoid_class_names = []
     if result.boxes is None or len(result.boxes) == 0:
-        raise RuntimeError("YOLO 没有识别到任何目标")
+        raise RuntimeError("没有识别到任何目标")
 
     h, w = result.orig_shape
     names = result.names
@@ -364,7 +364,7 @@ def get_target_from_yolo_result(result, target_class_name: str = "plate", avoid_
 
     target_class_ids = [cls_id for cls_id, cls_name in names.items() if str(cls_name) == target_class_name]
     if not target_class_ids:
-        raise RuntimeError(f"YOLO 模型中没有类别：{target_class_name}，当前类别：{names}")
+        raise RuntimeError(f"识别配置中没有类别：{target_class_name}，当前类别：{names}")
     target_class_id = int(target_class_ids[0])
     avoid_mask = build_avoid_mask(result, avoid_class_names)
 
@@ -398,7 +398,7 @@ def get_target_from_yolo_result(result, target_class_name: str = "plate", avoid_
 
 def is_no_plate_detected_error(error: Exception) -> bool:
     msg = str(error)
-    return "YOLO 没有识别到任何目标" in msg or "没有找到目标类别：plate" in msg
+    return "没有识别到任何目标" in msg or "没有找到目标类别：plate" in msg
 
 
 # =========================
@@ -729,7 +729,7 @@ def _import_osam():
         import osam.types  # type: ignore
         return osam.apis, osam.types
     except Exception as e:
-        raise RuntimeError("未找到 osam/SAM2 运行环境。请先安装并配置sam/sam2 环境。") from e
+        raise RuntimeError("未找到识别运行环境。请先安装并配置服务环境。") from e
 
 
 def _sam_annotation_to_full_mask(annotation, h: int, w: int) -> Optional[np.ndarray]:
@@ -859,7 +859,7 @@ def pick_best_mask_from_masks(masks: Sequence[np.ndarray], image_shape: Sequence
         if best is None or item["sam_score"] > best["sam_score"]:
             best = item
     if best is None:
-        raise RuntimeError("SAM2 没有得到有效 mask")
+        raise RuntimeError("没有得到有效 mask")
     return best["mask"], best
 
 
@@ -929,7 +929,7 @@ def run_sam2_by_candidate_points(image_rgb: np.ndarray, candidate_points: Sequen
                     return mask, item
 
     if best is None or best["sam_score"] < -100:
-        raise RuntimeError(f"多个候选点尝试后，SAM2 仍然没有得到合理 mask，tried={tried[:5]}")
+        raise RuntimeError("多个候选点尝试后仍然没有得到合理 mask")
     best["tried"] = tried
     return best["mask"], best
 
@@ -941,7 +941,7 @@ def run_sam2_by_user_ratio_point(image_rgb: np.ndarray, user_point_ratio: Any, t
     x, y = xy
     masks = run_sam2_masks_by_point(image_rgb=image_rgb, x=x, y=y, model_name=model_name)
     if not masks:
-        raise RuntimeError(f"人工点 SAM2 没有生成任何 mask，point=({x},{y})")
+        raise RuntimeError(f"人工点没有生成任何 mask，point=({x},{y})")
     mask, best = pick_best_mask_from_masks(masks, image_rgb.shape[:2], target_class_name, point_score=1.0)
     ratio = parse_user_point_ratio(user_point_ratio)
     best.update({"x": int(x), "y": int(y), "mode": "user_ratio_point", "user_ratio": ratio, "used_points": [{"x": int(x), "y": int(y), "ratio_x": float(ratio[0]), "ratio_y": float(ratio[1])}]})
@@ -1101,7 +1101,7 @@ def run_sam2_for_plate_from_yolo_or_fallback(
         fallback_point = candidate_points[0]
         masks = run_sam2_masks_by_point(image_rgb=image_rgb, x=int(fallback_point["x"]), y=int(fallback_point["y"]), model_name=model_name)
         if not masks:
-            raise RuntimeError(f"中心兜底点 SAM2 没有生成任何 mask，point=({fallback_point['x']},{fallback_point['y']})")
+            raise RuntimeError(f"中心兜底点没有生成任何 mask，point=({fallback_point['x']},{fallback_point['y']})")
         sam_mask, sam_info = pick_best_mask_from_masks(masks, image_rgb.shape[:2], target_class_name=plate_class_name, point_score=float(fallback_point.get("point_score", 1.0)))
         sam_info.update({"x": int(fallback_point["x"]), "y": int(fallback_point["y"]), "mode": "center_fallback_no_plate", "used_points": [fallback_point]})
     else:
@@ -2203,7 +2203,7 @@ def process_one_image(args) -> Dict[str, Any]:
     model_path = Path(args.model)
     if not model_path.exists():
         logger.error("YOLO model file does not exist: {}", model_path)
-        raise RuntimeError(f"YOLO 权重文件不存在：{model_path}")
+        raise RuntimeError(f"识别权重文件不存在：{model_path}")
 
     # HTTP 服务会把已缓存的 YOLO 模型对象放到 args.yolo_model。
     # 控制台模式下没有该字段，则仍按原逻辑从模型文件加载。
@@ -2268,7 +2268,7 @@ def process_one_image(args) -> Dict[str, Any]:
         )
     else:
         logger.error("Paper mask missing: paper_info={}", paper_info)
-        raise RuntimeError(f"未得到 paper mask，无法基于 A4 计算尺寸。paper_info={paper_info}")
+        raise RuntimeError("未得到 paper mask，无法基于 A4 计算尺寸")
 
     # 2. plate：YOLO -> 多点 -> SAM2 / 中心兜底
     plate_mask, plate_point_info = run_sam2_for_plate_from_yolo_or_fallback(

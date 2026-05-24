@@ -18,6 +18,7 @@ from loguru import logger
 
 from app.config import Settings
 from app.core.algorithm import IMAGE_EXTS, json_safe, process_one_image
+from app.errors import public_error_message, sanitize_public_error_message
 from app.services.dxf_preview import create_dxf_preview
 from app.services.model_cache import model_cache
 from app.services.task_store import TaskStore
@@ -297,7 +298,7 @@ class MeasureService:
                 task_id,
                 status="failed",
                 progress=100,
-                message=str(exc),
+                message=public_error_message(exc),
             )
 
     def list_client_tasks(self, client_id: str) -> list[Dict[str, Any]]:
@@ -334,7 +335,7 @@ class MeasureService:
             "size_bytes": int(row.get("file_size_bytes") or 0),
             "status": row.get("status"),
             "progress": int(row.get("progress") or 0),
-            "message": row.get("message") or "",
+            "message": sanitize_public_error_message(row.get("message") or "", fallback=""),
             "created_at": row.get("created_at"),
             "updated_at": row.get("updated_at"),
             "started_at": row.get("started_at"),
