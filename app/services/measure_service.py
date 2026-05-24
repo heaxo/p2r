@@ -136,6 +136,7 @@ class MeasureService:
             topdown_mm_per_px=float(topdown_mm_per_px),
             topdown_padding_mm=float(topdown_padding_mm),
             enabled=enabled,
+            dxf_postprocess_enabled=enabled,
             dxf_notch_fill_enabled=dxf_notch_fill_enabled,
             dxf_notch_fill_max_width_mm=dxf_notch_fill_max_width_mm,
             dxf_notch_fill_max_depth_mm=dxf_notch_fill_max_depth_mm,

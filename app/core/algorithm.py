@@ -1534,42 +1534,19 @@ def calc_dimensions(contour_mm: np.ndarray) -> dict:
     }
 
 
-def write_simple_dxf(path: Path, plate_contour_mm: np.ndarray, offset_to_positive: bool = True) -> None:
+def write_simple_dxf(path: Path, plate_contour_mm: np.ndarray, offset_to_positive: bool = True) -> Dict[str, Any]:
     """
     写 DXF，单位 mm。
 
     注意：这里故意只写钢板外轮廓，不写 A4 纸轮廓。
     A4 只用于标定尺寸，不属于最终 DXF 图形。
     """
-    plate = np.asarray(plate_contour_mm, dtype=np.float64).reshape(-1, 2)
-    if len(plate) > 1 and np.linalg.norm(plate[0] - plate[-1]) < 1e-6:
-        plate = plate[:-1]
-
-    dx = dy = 0.0
-    if offset_to_positive and len(plate) > 0:
-        min_xy = plate.min(axis=0)
-        dx = -min(0.0, float(min_xy[0]))
-        dy = -min(0.0, float(min_xy[1]))
-
-    def lwpolyline(layer: str, pts: np.ndarray, closed: bool = True) -> List[str]:
-        lines = ["0", "LWPOLYLINE", "8", layer, "90", str(len(pts)), "70", "1" if closed else "0"]
-        for x, y in pts:
-            lines.extend(["10", f"{x + dx:.3f}", "20", f"{y + dy:.3f}"])
-        return lines
-
-    lines = [
-        "0", "SECTION",
-        "2", "HEADER",
-        "9", "$INSUNITS",
-        "70", "4",
-        "0", "ENDSEC",
-        "0", "SECTION",
-        "2", "ENTITIES",
-    ]
-    lines.extend(lwpolyline("PLATE_OUTER", plate, True))
-    lines.extend(["0", "ENDSEC", "0", "EOF"])
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(lines), encoding="utf-8")
+    return write_optimized_dxf(
+        path=path,
+        plate_contour_mm=plate_contour_mm,
+        offset_to_positive=offset_to_positive,
+        layer="PLATE_OUTER",
+    )
 
 
 
@@ -1768,6 +1745,7 @@ from app.core.dxf_postprocess import (
     postprocess_plate_contour_mm,
     save_postprocess_preview,
 )
+from app.core.dxf_geometry import write_optimized_dxf
 
 def fit_circle_mm(points_mm: np.ndarray) -> dict:
     pts = np.asarray(points_mm, dtype=np.float32).reshape(-1, 2)
@@ -1783,24 +1761,51 @@ def fit_circle_mm(points_mm: np.ndarray) -> dict:
 
     dists = np.sqrt((x - cx) ** 2 + (y - cy) ** 2)
     radius_std = float(np.std(dists))
+    max_radius_error = float(np.max(np.abs(dists - radius)))
     radius_error_ratio = radius_std / max(radius, 1e-6)
 
     area = float(abs(cv2.contourArea(pts.reshape(-1, 1, 2))))
     perimeter = float(cv2.arcLength(pts.reshape(-1, 1, 2), True))
     circularity = 4.0 * np.pi * area / max(perimeter * perimeter, 1e-6)
 
+    x_min = float(np.min(x))
+    x_max = float(np.max(x))
+    y_min = float(np.min(y))
+    y_max = float(np.max(y))
+    diameter = radius * 2.0
+    bbox_diameter_error = max(
+        abs((x_max - x_min) - diameter),
+        abs((y_max - y_min) - diameter),
+    )
+
+    raw_angles = np.mod(np.arctan2(y - cy, x - cx), 2.0 * np.pi)
+    sorted_angles = np.sort(raw_angles)
+    gaps = np.diff(np.concatenate([sorted_angles, sorted_angles[:1] + 2.0 * np.pi]))
+    max_angle_gap_deg = float(np.degrees(np.max(gaps))) if len(gaps) else 360.0
+
+    circle_tolerance_mm = 5.0
+
     return {
         "center_x": float(cx),
         "center_y": float(cy),
         "radius": radius,
-        "diameter": radius * 2.0,
+        "diameter": diameter,
         "circularity": float(circularity),
+        "max_radius_error_mm": float(max_radius_error),
         "radius_error_ratio": float(radius_error_ratio),
-        "is_circle_like": circularity >= 0.86 and radius_error_ratio <= 0.08,
+        "bbox_diameter_error_mm": float(bbox_diameter_error),
+        "max_angle_gap_deg": float(max_angle_gap_deg),
+        "is_circle_like": (
+            circularity >= 0.94
+            and radius_error_ratio <= 0.02
+            and max_radius_error <= circle_tolerance_mm
+            and bbox_diameter_error <= circle_tolerance_mm * 2.0
+            and max_angle_gap_deg <= 60.0
+        ),
     }
 
 
-def write_circle_dxf(output_path: str | Path, circle: dict, offset_to_positive: bool = True) -> None:
+def write_circle_dxf(output_path: str | Path, circle: dict, offset_to_positive: bool = True) -> Dict[str, Any]:
     cx = float(circle["center_x"])
     cy = float(circle["center_y"])
     r = float(circle["radius"])
@@ -1836,6 +1841,29 @@ def write_circle_dxf(output_path: str | Path, circle: dict, offset_to_positive: 
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines), encoding="utf-8")
+    return {
+        "enabled": True,
+        "mode": "circle_override",
+        "input_points": None,
+        "entity_count": 1,
+        "entity_type_counts": {"CIRCLE": 1},
+        "max_fit_error_mm": round(float(circle.get("max_radius_error_mm", 0.0)), 6),
+        "offset_x_mm": round(float(offset_x), 6),
+        "offset_y_mm": round(float(offset_y), 6),
+        "path": str(path),
+        "entities": [
+            {
+                "type": "CIRCLE",
+                "center": [round(float(circle["center_x"]), 6), round(float(circle["center_y"]), 6)],
+                "radius": round(float(circle["radius"]), 6),
+                "diameter": round(float(circle["diameter"]), 6),
+                "max_error_mm": round(float(circle.get("max_radius_error_mm", 0.0)), 6),
+                "circularity": round(float(circle.get("circularity", 0.0)), 6),
+                "radius_error_ratio": round(float(circle.get("radius_error_ratio", 0.0)), 6),
+                "bbox_diameter_error_mm": round(float(circle.get("bbox_diameter_error_mm", 0.0)), 6),
+            }
+        ],
+    }
 
 
 
@@ -2041,6 +2069,7 @@ def process_one_image(args) -> Dict[str, Any]:
     circle_info = fit_circle_mm(plate_contour_mm_raw)
 
     dxf_path = run_dir / "plate_outer.dxf"
+    dxf_geometry_info: Dict[str, Any] = {}
 
     if circle_info["is_circle_like"]:
         logger.info(
@@ -2049,7 +2078,7 @@ def process_one_image(args) -> Dict[str, Any]:
             float(circle_info["circularity"]),
         )
         # 圆形钢板直接写 DXF CIRCLE，不走折线和后处理。
-        write_circle_dxf(
+        dxf_geometry_info = write_circle_dxf(
             dxf_path,
             circle_info,
             offset_to_positive=True,
@@ -2134,12 +2163,16 @@ def process_one_image(args) -> Dict[str, Any]:
 
         dims = calc_dimensions(plate_contour_mm)
 
-        write_simple_dxf(
+        dxf_geometry_info = write_simple_dxf(
             dxf_path,
             plate_contour_mm,
             offset_to_positive=True,
         )
-        logger.info("DXF written: {}", dxf_path)
+        logger.info(
+            "DXF written: {}, entities={}",
+            dxf_path,
+            dxf_geometry_info.get("entity_type_counts"),
+        )
 
     ENABLE_TOPDOWN_WARP_OUTPUT = True
 
@@ -2164,14 +2197,8 @@ def process_one_image(args) -> Dict[str, Any]:
             }
         }
 
-    # 9. DXF使用后处理后的轮廓
-    dxf_path = run_dir / "plate_outer.dxf"
-    write_simple_dxf(
-        dxf_path,
-        plate_contour_mm,
-        offset_to_positive=True,
-    )
-    logger.info("Final DXF written: {}", dxf_path)
+    # 9. DXF 已在上面的圆形/非圆形分支写入，不能在这里再次写成 LWPOLYLINE 覆盖。
+    logger.info("Final DXF ready: {}, entities={}", dxf_path, dxf_geometry_info.get("entity_type_counts"))
 
     debug_overlay_path = run_dir / "debug_overlay.jpg"
     save_debug_overlay(
@@ -2236,6 +2263,7 @@ def process_one_image(args) -> Dict[str, Any]:
 
         # 新增：DXF后处理信息
         "dxf_postprocess": dxf_postprocess_info,
+        "dxf_geometry": dxf_geometry_info,
 
         # 尺寸基于后处理后的轮廓
         "plate_dimensions": dims,
