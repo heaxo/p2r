@@ -12,9 +12,16 @@ import numpy as np
 class DxfGeometryOptimizeConfig:
     enabled: bool = True
     line_tolerance_mm: float = 2.0
+    line_max_tolerance_mm: float = 6.0
+    line_rms_tolerance_mm: float = 2.5
+    line_tolerance_ratio: float = 0.003
+    line_max_tolerance_ratio: float = 0.008
     line_min_length_mm: float = 20.0
-    line_endpoint_angle_deg: float = 10.0
+    line_endpoint_angle_deg: float = 18.0
+    line_merge_angle_deg: float = 3.0
+    line_merge_gap_mm: float = 2.0
     arc_tolerance_mm: float = 3.0
+    arc_max_tolerance_mm: float = 6.0
     arc_min_points: int = 5
     arc_min_length_mm: float = 20.0
     arc_min_sweep_deg: float = 8.0
@@ -24,10 +31,20 @@ class DxfGeometryOptimizeConfig:
     arc_endpoint_tangent_angle_deg: float = 15.0
     arc_max_edge_length_ratio: float = 8.0
     circle_tolerance_mm: float = 3.0
+    circle_max_tolerance_mm: float = 6.0
     circle_min_points: int = 12
     circle_min_circularity: float = 0.94
     circle_max_radial_error_ratio: float = 0.02
     circle_max_angle_gap_deg: float = 60.0
+    preprocess_enabled: bool = True
+    preprocess_resample_step_mm: float = 3.0
+    preprocess_min_points: int = 48
+    preprocess_max_points: int = 720
+    corner_window_mm: float = 18.0
+    corner_min_deflection_deg: float = 24.0
+    corner_min_spacing_mm: float = 12.0
+    corner_max_points: int = 120
+    max_fit_scan_edges: int = 320
 
 
 def write_optimized_dxf(
@@ -74,22 +91,32 @@ def optimize_contour_entities(
     config: DxfGeometryOptimizeConfig | None = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     cfg = config or DxfGeometryOptimizeConfig()
-    pts = _remove_closing_duplicate(_as_points(contour_mm))
+    source_pts = _remove_closing_duplicate(_as_points(contour_mm))
+    pts, preprocess_info = _prepare_contour_for_geometry(source_pts, cfg)
 
-    if len(pts) == 1:
-        return [], _empty_info(cfg, len(pts), "not_enough_points")
+    if len(source_pts) == 1:
+        info = _empty_info(cfg, len(source_pts), "not_enough_points")
+        info["preprocess"] = preprocess_info
+        return [], info
 
-    if len(pts) == 2:
-        entity = _line_entity(pts[0], pts[1], 2, 0.0)
-        return [entity], _summary_info(cfg, len(pts), [entity], "single_segment")
+    if len(source_pts) == 2:
+        entity = _line_entity(source_pts[0], source_pts[1], 2, 0.0)
+        info = _summary_info(cfg, len(source_pts), [entity], "single_segment")
+        info["preprocess"] = preprocess_info
+        return [entity], info
 
     if not cfg.enabled:
-        entities = [_polyline_fallback_entity(pts)]
-        return entities, _summary_info(cfg, len(pts), entities, "disabled")
+        entities = [_polyline_fallback_entity(source_pts)]
+        info = _summary_info(cfg, len(source_pts), entities, "disabled")
+        info["preprocess"] = preprocess_info
+        return entities, info
 
     circle = _try_fit_full_circle(pts, cfg)
     if circle is not None:
-        return [circle], _summary_info(cfg, len(pts), [circle], "full_circle")
+        info = _summary_info(cfg, len(source_pts), [circle], "full_circle")
+        info["working_points"] = int(len(pts))
+        info["preprocess"] = preprocess_info
+        return [circle], info
 
     rotated, start_index = _rotate_to_best_break(pts)
     ext = np.vstack([rotated, rotated[:1]])
@@ -107,9 +134,144 @@ def optimize_contour_entities(
         entities.append(best)
         i += int(best["edge_count"])
 
-    info = _summary_info(cfg, len(pts), entities, "segmented")
+    info = _summary_info(cfg, len(source_pts), entities, "segmented")
+    info["working_points"] = int(len(pts))
+    info["preprocess"] = preprocess_info
     info["break_start_index"] = int(start_index)
     return entities, info
+
+
+def _prepare_contour_for_geometry(
+    points: np.ndarray,
+    cfg: DxfGeometryOptimizeConfig,
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    pts = _remove_consecutive_duplicates(_remove_closing_duplicate(_as_points(points)))
+    info: Dict[str, Any] = {
+        "enabled": bool(cfg.preprocess_enabled),
+        "source_points": int(len(pts)),
+        "working_points": int(len(pts)),
+        "resampled": False,
+        "corner_points": 0,
+    }
+
+    if not bool(cfg.preprocess_enabled) or len(pts) < 4:
+        return pts.copy(), info
+
+    perimeter = _perimeter(pts)
+    if perimeter <= 1e-6:
+        return pts.copy(), info
+
+    max_points = max(12, int(cfg.preprocess_max_points))
+    min_points = min(max_points, max(4, int(cfg.preprocess_min_points)))
+    step = max(0.5, float(cfg.preprocess_resample_step_mm))
+    uniform_count = int(math.ceil(perimeter / step))
+    uniform_count = max(min_points, min(max_points, uniform_count))
+
+    corners = _candidate_corner_distances(pts, perimeter, cfg)
+    sampled = _resample_closed_contour(pts, perimeter, uniform_count, corners, cfg)
+    sampled = _remove_consecutive_duplicates(sampled)
+
+    if len(sampled) < 3:
+        return pts.copy(), info
+
+    info.update({
+        "working_points": int(len(sampled)),
+        "resampled": True,
+        "resample_step_mm": round(float(perimeter / max(len(sampled), 1)), 6),
+        "perimeter_mm": round(float(perimeter), 6),
+        "corner_points": int(len(corners)),
+    })
+    return sampled, info
+
+
+def _candidate_corner_distances(
+    points: np.ndarray,
+    perimeter: float,
+    cfg: DxfGeometryOptimizeConfig,
+) -> List[float]:
+    pts = _remove_closing_duplicate(_as_points(points))
+    n = len(pts)
+    if n < 4 or perimeter <= 1e-6:
+        return []
+
+    closed, seg_lengths, cumulative = _closed_polyline_metrics(pts)
+    if len(seg_lengths) == 0:
+        return []
+
+    window = max(
+        float(cfg.corner_window_mm),
+        float(cfg.preprocess_resample_step_mm) * 3.0,
+    )
+    threshold = float(cfg.corner_min_deflection_deg)
+    min_spacing = max(1.0, float(cfg.corner_min_spacing_mm))
+    candidates: List[Tuple[float, float]] = []
+
+    for i in range(n):
+        distance = float(cumulative[i])
+        curr = pts[i]
+        prev_pt = _point_at_closed_distance(closed, seg_lengths, cumulative, distance - window, perimeter)
+        next_pt = _point_at_closed_distance(closed, seg_lengths, cumulative, distance + window, perimeter)
+        v1 = curr - prev_pt
+        v2 = next_pt - curr
+
+        if float(np.linalg.norm(v1)) <= 1e-6 or float(np.linalg.norm(v2)) <= 1e-6:
+            continue
+
+        deflection = _angle_between_vectors_deg(v1, v2)
+        if deflection >= threshold:
+            candidates.append((float(deflection), distance))
+
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    kept: List[Tuple[float, float]] = []
+    max_corners = max(0, int(cfg.corner_max_points))
+    for deflection, distance in candidates:
+        if all(_cyclic_distance(distance, kept_distance, perimeter) >= min_spacing for _, kept_distance in kept):
+            kept.append((deflection, distance))
+            if len(kept) >= max_corners:
+                break
+
+    return [distance for _, distance in sorted(kept, key=lambda item: item[1])]
+
+
+def _resample_closed_contour(
+    points: np.ndarray,
+    perimeter: float,
+    uniform_count: int,
+    corner_distances: List[float],
+    cfg: DxfGeometryOptimizeConfig,
+) -> np.ndarray:
+    pts = _remove_closing_duplicate(_as_points(points))
+    closed, seg_lengths, cumulative = _closed_polyline_metrics(pts)
+    if perimeter <= 1e-6 or len(seg_lengths) == 0:
+        return pts.copy()
+
+    max_points = max(12, int(cfg.preprocess_max_points))
+    min_spacing = max(1e-4, min(float(cfg.preprocess_resample_step_mm) * 0.4, float(cfg.corner_min_spacing_mm) * 0.35))
+    distances: List[float] = []
+
+    for distance in corner_distances:
+        d = float(distance % perimeter)
+        if not _has_near_distance(d, distances, min_spacing, perimeter):
+            distances.append(d)
+
+    remaining_slots = max(0, max_points - len(distances))
+    if remaining_slots <= 0:
+        uniform_distances = np.asarray([], dtype=np.float64)
+    else:
+        uniform_samples = min(max(4, int(uniform_count)), remaining_slots)
+        uniform_distances = np.linspace(0.0, perimeter, uniform_samples, endpoint=False)
+
+    for distance in uniform_distances:
+        d = float(distance % perimeter)
+        if not _has_near_distance(d, distances, min_spacing, perimeter):
+            distances.append(d)
+
+    distances = sorted(distances)
+    sampled = [
+        _point_at_closed_distance(closed, seg_lengths, cumulative, distance, perimeter)
+        for distance in distances
+    ]
+    return np.asarray(sampled, dtype=np.float64).reshape(-1, 2)
 
 
 def _best_entity_from_index(
@@ -120,8 +282,9 @@ def _best_entity_from_index(
 ) -> Dict[str, Any] | None:
     best_line: Dict[str, Any] | None = None
     best_arc: Dict[str, Any] | None = None
+    max_end = min(n, start + max(2, int(cfg.max_fit_scan_edges)))
 
-    for end in range(start + 1, n + 1):
+    for end in range(start + 1, max_end + 1):
         chain = ext[start:end + 1]
         edge_count = end - start
 
@@ -147,6 +310,12 @@ def _best_entity_from_index(
     if arc_edges > line_edges:
         return best_arc
 
+    if arc_edges == line_edges:
+        arc_error = float(best_arc.get("rms_error_mm", best_arc.get("max_error_mm", 0.0)))
+        line_error = float(best_line.get("rms_error_mm", best_line.get("max_error_mm", 0.0)))
+        if arc_error + 0.25 < line_error:
+            return best_arc
+
     return best_line
 
 
@@ -167,7 +336,18 @@ def _try_fit_line(
         return None
 
     distances, projections = _line_distances_and_projection(pts, a, b)
-    if float(np.max(distances)) > float(cfg.line_tolerance_mm):
+    max_error = float(np.max(distances))
+    p95_error = float(np.percentile(distances, 95.0))
+    rms_error = float(np.sqrt(np.mean(distances ** 2)))
+    p95_limit, max_limit, rms_limit = _line_fit_limits(length, cfg)
+
+    if p95_error > p95_limit:
+        return None
+
+    if max_error > max_limit:
+        return None
+
+    if rms_error > rms_limit:
         return None
 
     if float(np.min(projections)) < -0.02 or float(np.max(projections)) > 1.02:
@@ -187,7 +367,12 @@ def _try_fit_line(
     if end_angle > float(cfg.line_endpoint_angle_deg):
         return None
 
-    return _line_entity(a, b, len(pts), float(np.max(distances)))
+    entity = _line_entity(a, b, len(pts), max_error)
+    entity["p95_error_mm"] = float(p95_error)
+    entity["rms_error_mm"] = float(rms_error)
+    entity["fit_tolerance_mm"] = float(p95_limit)
+    entity["fit_max_tolerance_mm"] = float(max_limit)
+    return entity
 
 
 def _try_fit_arc(
@@ -228,9 +413,16 @@ def _try_fit_arc(
     dists = np.linalg.norm(pts - center, axis=1)
     radial_errors = np.abs(dists - radius)
     max_error = float(np.max(radial_errors))
+    p95_error = float(np.percentile(radial_errors, 95.0))
     rms_error = float(np.sqrt(np.mean(radial_errors ** 2)))
 
-    if max_error > float(cfg.arc_tolerance_mm):
+    arc_p95_limit = max(float(cfg.arc_tolerance_mm), radius * float(cfg.arc_max_radial_error_ratio) * 0.5)
+    arc_max_limit = max(float(cfg.arc_max_tolerance_mm), radius * float(cfg.arc_max_radial_error_ratio))
+
+    if p95_error > arc_p95_limit:
+        return None
+
+    if max_error > arc_max_limit:
         return None
 
     if rms_error > max(1.5, float(cfg.arc_tolerance_mm) * 0.5):
@@ -283,6 +475,7 @@ def _try_fit_arc(
         "point_count": int(len(pts)),
         "edge_count": int(len(pts) - 1),
         "max_error_mm": float(max_error),
+        "p95_error_mm": float(p95_error),
         "rms_error_mm": float(rms_error),
         "monotonic_ratio": float(monotonic_ratio),
         "start_tangent_angle_deg": float(start_tangent_angle),
@@ -305,10 +498,17 @@ def _try_fit_full_circle(
     dists = np.linalg.norm(pts - center, axis=1)
     radial_errors = np.abs(dists - radius)
     max_error = float(np.max(radial_errors))
+    p95_error = float(np.percentile(radial_errors, 95.0))
     radius_std = float(np.std(dists))
     radius_error_ratio = radius_std / max(radius, 1e-6)
 
-    if max_error > float(cfg.circle_tolerance_mm):
+    circle_p95_limit = max(float(cfg.circle_tolerance_mm), radius * float(cfg.circle_max_radial_error_ratio) * 0.5)
+    circle_max_limit = max(float(cfg.circle_max_tolerance_mm), radius * float(cfg.circle_max_radial_error_ratio))
+
+    if p95_error > circle_p95_limit:
+        return None
+
+    if max_error > circle_max_limit:
         return None
 
     if radius_error_ratio > float(cfg.circle_max_radial_error_ratio):
@@ -343,6 +543,7 @@ def _try_fit_full_circle(
         "point_count": int(len(pts)),
         "edge_count": int(len(pts)),
         "max_error_mm": float(max_error),
+        "p95_error_mm": float(p95_error),
         "radius_std_mm": float(radius_std),
         "radius_error_ratio": float(radius_error_ratio),
         "circularity": float(circularity),
@@ -411,6 +612,70 @@ def _line_distances_and_projection(
     closest = a + np.outer(signed, unit)
     distances = np.linalg.norm(pts - closest, axis=1)
     return distances.astype(np.float64), projections.astype(np.float64)
+
+
+def _line_fit_limits(
+    length: float,
+    cfg: DxfGeometryOptimizeConfig,
+) -> Tuple[float, float, float]:
+    p95_limit = max(float(cfg.line_tolerance_mm), float(length) * float(cfg.line_tolerance_ratio))
+    max_limit = max(float(cfg.line_max_tolerance_mm), float(length) * float(cfg.line_max_tolerance_ratio))
+    rms_limit = max(float(cfg.line_rms_tolerance_mm), p95_limit * 1.25)
+
+    p95_limit = min(p95_limit, 8.0)
+    max_limit = min(max_limit, 18.0)
+    rms_limit = min(rms_limit, 8.0)
+    return float(p95_limit), float(max_limit), float(rms_limit)
+
+
+def _closed_polyline_metrics(points: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    pts = _remove_closing_duplicate(_as_points(points))
+    closed = np.vstack([pts, pts[:1]])
+    seg_lengths = np.linalg.norm(np.diff(closed, axis=0), axis=1)
+    cumulative = np.concatenate([[0.0], np.cumsum(seg_lengths)])
+    return closed, seg_lengths.astype(np.float64), cumulative.astype(np.float64)
+
+
+def _point_at_closed_distance(
+    closed: np.ndarray,
+    seg_lengths: np.ndarray,
+    cumulative: np.ndarray,
+    distance: float,
+    perimeter: float,
+) -> np.ndarray:
+    if perimeter <= 1e-9 or len(seg_lengths) == 0:
+        return closed[0].copy()
+
+    d = float(distance % perimeter)
+    idx = int(np.searchsorted(cumulative, d, side="right") - 1)
+    idx = max(0, min(idx, len(seg_lengths) - 1))
+
+    while idx < len(seg_lengths) - 1 and seg_lengths[idx] <= 1e-9:
+        idx += 1
+
+    seg_len = float(seg_lengths[idx])
+    if seg_len <= 1e-9:
+        return closed[idx].copy()
+
+    t = (d - float(cumulative[idx])) / seg_len
+    t = max(0.0, min(1.0, float(t)))
+    return (closed[idx] * (1.0 - t) + closed[idx + 1] * t).astype(np.float64)
+
+
+def _has_near_distance(
+    distance: float,
+    distances: List[float],
+    min_spacing: float,
+    perimeter: float,
+) -> bool:
+    return any(_cyclic_distance(distance, existing, perimeter) < min_spacing for existing in distances)
+
+
+def _cyclic_distance(a: float, b: float, period: float) -> float:
+    if period <= 1e-9:
+        return abs(float(a) - float(b))
+    delta = abs(float(a) - float(b)) % float(period)
+    return min(delta, float(period) - delta)
 
 
 def _rotate_to_best_break(points: np.ndarray) -> Tuple[np.ndarray, int]:
@@ -651,7 +916,10 @@ def _entity_info_for_json(entity: Dict[str, Any]) -> Dict[str, Any]:
         "point_count",
         "edge_count",
         "max_error_mm",
+        "p95_error_mm",
         "rms_error_mm",
+        "fit_tolerance_mm",
+        "fit_max_tolerance_mm",
         "radius",
         "diameter",
         "input_sweep_deg",
@@ -683,6 +951,22 @@ def _remove_closing_duplicate(points: np.ndarray) -> np.ndarray:
     if len(pts) >= 2 and np.linalg.norm(pts[0] - pts[-1]) < 1e-6:
         return pts[:-1].copy()
     return pts.copy()
+
+
+def _remove_consecutive_duplicates(points: np.ndarray, tolerance: float = 1e-6) -> np.ndarray:
+    pts = _remove_closing_duplicate(_as_points(points))
+    if len(pts) <= 1:
+        return pts.copy()
+
+    kept = [pts[0]]
+    for point in pts[1:]:
+        if float(np.linalg.norm(point - kept[-1])) > float(tolerance):
+            kept.append(point)
+
+    if len(kept) >= 2 and float(np.linalg.norm(kept[0] - kept[-1])) <= float(tolerance):
+        kept.pop()
+
+    return np.asarray(kept, dtype=np.float64).reshape(-1, 2)
 
 
 def _polygon_area(points: np.ndarray) -> float:

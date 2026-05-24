@@ -36,17 +36,17 @@ class DxfPostProcessConfig:
 
     # 凹陷宽度范围
     notch_fill_min_width_mm: float = 30.0
-    notch_fill_max_width_mm: float = 130
+    notch_fill_max_width_mm: float = 80.0
 
     # 凹陷深度范围
     notch_fill_min_depth_mm: float = 10
-    notch_fill_max_depth_mm: float = 60
+    notch_fill_max_depth_mm: float = 25.0
 
     # 凹陷链条长度 / 直连距离，越大越像凹陷
-    notch_fill_min_chain_ratio: float = 1.12
+    notch_fill_min_chain_ratio: float = 1.18
 
     # 一个凹陷最多跨多少个轮廓点
-    notch_fill_max_points: int = 14
+    notch_fill_max_points: int = 10
 
     # 修复凹陷时，凹陷两侧边与修复直线的最大夹角
     notch_edge_parallel_angle_deg: float = 35.0
