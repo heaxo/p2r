@@ -254,7 +254,7 @@ def ratio_to_xy(user_point_ratio, image_shape):
 def _get_mask_from_yolo_result(result, index, h, w):
     """
     从 YOLO seg 结果中取单个实例 mask，并缩放到原图尺寸。
-    如果 best.pt 不是 seg 模型，则 result.masks 会是 None。
+    如果 best2.pt 不是 seg 模型，则 result.masks 会是 None。
     """
     if result.masks is None:
         return None

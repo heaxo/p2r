@@ -87,6 +87,13 @@
       font-weight: 800;
     }
 
+    .title-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex: 0 0 auto;
+    }
+
     .panel-body { padding: 10px; }
 
     .upload-zone {
@@ -679,7 +686,10 @@
         <section class="panel">
           <div class="panel-title">
             <span>任务列表</span>
-            <button class="btn-small" id="refreshBtn" type="button">刷新</button>
+            <div class="title-actions">
+              <button class="btn-small" id="downloadDxfBtn" type="button">批量下载DXF</button>
+              <button class="btn-small" id="refreshBtn" type="button">刷新</button>
+            </div>
           </div>
           <div class="table-wrap" id="taskTableWrap"></div>
         </section>
@@ -706,6 +716,7 @@
     const selectedFilesBox = document.getElementById('selectedFiles');
     const submitBtn = document.getElementById('submitBtn');
     const clearBtn = document.getElementById('clearBtn');
+    const downloadDxfBtn = document.getElementById('downloadDxfBtn');
     const refreshBtn = document.getElementById('refreshBtn');
     const statusBox = document.getElementById('statusBox');
     const taskTableWrap = document.getElementById('taskTableWrap');
@@ -717,6 +728,7 @@
     let selectedTaskId = null;
     let pollingTimer = null;
     let detailOpenByTask = {};
+    let isDownloadingDxf = false;
 
     const detailImages = [
       ['upload', '原图'],
@@ -900,6 +912,80 @@
       return data;
     }
 
+    function completedDxfTasks() {
+      return tasks.filter(task => task.status === 'completed' && (
+        (task.urls && task.urls.dxf) || (task.paths && task.paths.dxf)
+      ));
+    }
+
+    function updateDownloadDxfButton() {
+      const count = completedDxfTasks().length;
+      downloadDxfBtn.disabled = isDownloadingDxf || count === 0;
+      downloadDxfBtn.textContent = isDownloadingDxf
+        ? '打包中'
+        : (count > 0 ? `下载DXF(${count})` : '批量下载DXF');
+      downloadDxfBtn.title = count > 0 ? `下载当前列表中 ${count} 个已完成 DXF` : '暂无可下载的 DXF';
+    }
+
+    function filenameFromDisposition(header, fallback) {
+      const value = header || '';
+      const utf8Match = value.match(/filename\*=UTF-8''([^;]+)/i);
+      if (utf8Match) {
+        try {
+          return decodeURIComponent(utf8Match[1]);
+        } catch (error) {
+          return fallback;
+        }
+      }
+
+      const asciiMatch = value.match(/filename="?([^";]+)"?/i);
+      return asciiMatch ? asciiMatch[1] : fallback;
+    }
+
+    async function batchDownloadDxf() {
+      const readyTasks = completedDxfTasks();
+      if (!readyTasks.length) {
+        setStatus('当前没有可下载的 DXF。', 'error');
+        updateDownloadDxfButton();
+        return;
+      }
+
+      isDownloadingDxf = true;
+      updateDownloadDxfButton();
+      setStatus(`正在打包 ${readyTasks.length} 个 DXF...`);
+
+      try {
+        const response = await fetch('/tasks/download-dxf', { headers: apiHeaders() });
+        if (!response.ok) {
+          const contentType = response.headers.get('content-type') || '';
+          const errorBody = contentType.includes('application/json')
+            ? await response.json()
+            : await response.text();
+          const message = typeof errorBody === 'string' ? errorBody : (errorBody.detail || JSON.stringify(errorBody));
+          throw new Error(message);
+        }
+
+        const blob = await response.blob();
+        const filename = filenameFromDisposition(response.headers.get('content-disposition'), 'plate_dxf.zip');
+        const downloadUrl = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = downloadUrl;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(downloadUrl);
+
+        const downloadedCount = response.headers.get('X-DXF-File-Count') || readyTasks.length;
+        setStatus(`已打包下载 ${downloadedCount} 个 DXF。`, 'ok');
+      } catch (error) {
+        setStatus(`批量下载失败：${error.message || error}`, 'error');
+      } finally {
+        isDownloadingDxf = false;
+        updateDownloadDxfButton();
+      }
+    }
+
     async function loadTasks(silent = false) {
       try {
         const data = await fetchJson('/tasks', { headers: apiHeaders() });
@@ -996,6 +1082,7 @@
     function renderTasks() {
       if (!tasks.length) {
         taskTableWrap.innerHTML = '<div class="empty-table">当前客户端暂无上传任务。</div>';
+        updateDownloadDxfButton();
         return;
       }
 
@@ -1049,6 +1136,7 @@
           <tbody>${rows}</tbody>
         </table>
       `;
+      updateDownloadDxfButton();
     }
 
     function metric(name, value, suffix = '') {
@@ -1226,6 +1314,7 @@
     });
 
     refreshBtn.addEventListener('click', () => loadTasks(false));
+    downloadDxfBtn.addEventListener('click', batchDownloadDxf);
 
     clearBtn.addEventListener('click', async () => {
       if (!confirm('确认清除当前客户端的全部上传记录和结果文件？')) {
@@ -1265,6 +1354,7 @@
     }, true);
 
     renderSelectedFiles();
+    updateDownloadDxfButton();
     loadTasks(true);
   </script>
 </body>

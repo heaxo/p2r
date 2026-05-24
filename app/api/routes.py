@@ -4,9 +4,14 @@ import traceback
 import time
 import re
 import json
+import io
+import zipfile
+from datetime import datetime
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile, status
+from fastapi.responses import StreamingResponse
 from loguru import logger
 from starlette.concurrency import run_in_threadpool
 
@@ -178,6 +183,60 @@ async def list_tasks(
 ) -> dict:
     client_id = _require_client_id(x_client_id)
     return {"ok": True, "client_id": client_id, "tasks": service.list_client_tasks(client_id)}
+
+
+@router.get("/tasks/download-dxf", dependencies=[Depends(require_token)])
+async def download_client_dxf(
+    x_client_id: Annotated[str | None, Header(alias="X-Client-Id")] = None,
+) -> StreamingResponse:
+    client_id = _require_client_id(x_client_id)
+    tasks = service.list_client_tasks(client_id)
+
+    zip_buffer = io.BytesIO()
+    added = 0
+    used_names: set[str] = set()
+
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for task in tasks:
+            if task.get("status") != "completed":
+                continue
+
+            dxf_value = (task.get("paths") or {}).get("dxf")
+            if not dxf_value:
+                continue
+
+            dxf_path = Path(dxf_value)
+            if not dxf_path.exists() or not dxf_path.is_file():
+                logger.warning(
+                    "Skipping missing DXF during batch download: client_id={}, task_id={}, path={}",
+                    client_id,
+                    task.get("id"),
+                    dxf_path,
+                )
+                continue
+
+            base_name = Path(str(task.get("filename") or task.get("id") or "plate")).stem
+            safe_name = re.sub(r'[\\/:*?"<>|]+', "_", base_name).strip(" .") or str(task.get("id") or "plate")
+            archive_name = f"{safe_name}.dxf"
+            suffix = 2
+            while archive_name in used_names:
+                archive_name = f"{safe_name}_{suffix}.dxf"
+                suffix += 1
+
+            used_names.add(archive_name)
+            archive.write(dxf_path, archive_name)
+            added += 1
+
+    if added == 0:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No completed DXF files for this client")
+
+    zip_buffer.seek(0)
+    filename = f"plate_dxf_{client_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "X-DXF-File-Count": str(added),
+    }
+    return StreamingResponse(iter([zip_buffer.getvalue()]), media_type="application/zip", headers=headers)
 
 
 @router.get("/tasks/{task_id}", dependencies=[Depends(require_token)])

@@ -34,7 +34,7 @@ YOLO + SAM2 钢板/A4纸识别 HTTP 服务版 v6
     # 还需要你原来使用的 osam/sam2 运行环境
 
     python plate_yolo_sam2_http_service_v6.py \
-        --yolo-model D:/models/best.pt \
+        --yolo-model D:/models/best2.pt \
         --output-root D:/output \
         --host 0.0.0.0 \
         --port 8000
@@ -153,7 +153,7 @@ PAPER_SAM2_FALLBACK_TO_YOLO_MASK = True
 # =========================
 class ProcessRequest(BaseModel):
     image_path: Optional[str] = Field(default=None, description="服务端本地图片路径。/process-path 必填")
-    yolo_model_path: Optional[str] = Field(default=None, description="YOLO best.pt 路径；不传则使用启动参数")
+    yolo_model_path: Optional[str] = Field(default=None, description="YOLO best2.pt 路径；不传则使用启动参数")
     output_root: Optional[str] = Field(default=None, description="输出目录；不传则使用启动参数")
 
     target_class_names: List[str] = Field(default_factory=lambda: ["plate"])
@@ -3605,7 +3605,7 @@ async def process_upload(
 # =========================
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--yolo-model", default=DEFAULT_YOLO_MODEL_PATH, help="YOLO best.pt 路径")
+    parser.add_argument("--yolo-model", default=DEFAULT_YOLO_MODEL_PATH, help="YOLO best2.pt 路径")
     parser.add_argument("--output-root", default=DEFAULT_OUTPUT_ROOT, help="输出根目录")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)

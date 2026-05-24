@@ -57,7 +57,7 @@ DEFAULT_MODEL_PATH = "best2.pt"
 DEFAULT_SAM_MODEL_NAME = "sam2"
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
-YOLO_CONF = 0.35
+YOLO_CONF = 0.15
 YOLO_IMGSZ = 1280
 
 # plate 自动点选择
@@ -968,7 +968,7 @@ def run_paper_from_yolo_only(
 
     instance = get_largest_yolo_instance_by_classes(result, paper_class_names)
     if instance is None:
-        info["message"] = "YOLO 未识别到 paper。请检查 paper_class_names、yolo_conf 或图片方向。"
+        info["message"] = "未识别到 paper。"
         return None, info
 
     info["yolo_paper_detected"] = True
@@ -1020,7 +1020,7 @@ def run_sam2_for_paper_from_yolo(
 
     instance = get_largest_yolo_instance_by_classes(result, paper_class_names)
     if instance is None:
-        info["message"] = "YOLO 未识别到 paper。请检查 paper_class_names、yolo_conf 或图片方向。"
+        info["message"] = "未识别到 paper"
         return None, info
 
     info["yolo_paper_detected"] = True
@@ -1044,7 +1044,7 @@ def run_sam2_for_paper_from_yolo(
                 if best["sam_detail"].get("reason") == "ok" and best["sam_score"] > -100:
                     info["paper_mask_source"] = "sam2_one_point_from_yolo_paper"
                     info["sam_info"] = {"x": int(point["x"]), "y": int(point["y"]), "mode": "paper_one_point", "sam_score": float(best["sam_score"]), "sam_detail": best["sam_detail"], "mask_index": int(best["mask_index"])}
-                    info["message"] = "YOLO 已识别 paper，并用单点传给 SAM2 成功生成 paper mask"
+                    info["message"] = "已识别 paper，并成功生成 paper mask"
                     return paper_mask, info
                 info["sam_info"] = {"sam_score": float(best["sam_score"]), "sam_detail": best["sam_detail"], "message": "SAM2 paper mask 评分不合理"}
             else:

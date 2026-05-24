@@ -89,7 +89,7 @@ def get_yolo_box(
         imgsz=1280
 ):
     """
-    用 YOLO best.pt 找目标框。
+    用 YOLO best2.pt 找目标框。
 
     target_class_name:
         None       = 不指定类别，默认取置信度最高的目标
