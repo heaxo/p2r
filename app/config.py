@@ -21,6 +21,7 @@ class Settings:
     serialize_processing: bool = True
     log_dir: Path = Path("logs")
     log_level: str = "INFO"
+    task_db_path: Path = Path("data/tasks.sqlite3")
 
 
 def get_settings() -> Settings:
@@ -30,9 +31,11 @@ def get_settings() -> Settings:
     customer's intranet without extra configuration libraries.
     """
 
+    output_root = Path(os.getenv("OUTPUT_ROOT", "measure_out"))
+
     return Settings(
         auth_token=os.getenv("APP_TOKEN", "tk_c2VjcmV0LXJhbmRvbS10b2tlbi0xMjM0NTY3OA"),
-        output_root=Path(os.getenv("OUTPUT_ROOT", "measure_out")),
+        output_root=output_root,
         model_path=Path(os.getenv("YOLO_MODEL_PATH", "best2.pt")),
         sam_model=os.getenv("SAM_MODEL", "sam2"),
         default_imgsz=int(os.getenv("YOLO_IMGSZ", "1280")),
@@ -42,4 +45,5 @@ def get_settings() -> Settings:
         serialize_processing=os.getenv("SERIALIZE_PROCESSING", "true").lower() in {"1", "true", "yes", "y"},
         log_dir=Path(os.getenv("LOG_DIR", "logs")),
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
+        task_db_path=Path(os.getenv("TASK_DB_PATH", "data/tasks.sqlite3")),
     )

@@ -1,5 +1,7 @@
 .venv
 .idea
+__pycache__/
+*.pyc
 batch_output
 measure_out
 batch_yolo_sam2_point_output*
@@ -11,3 +13,5 @@ test/batch_yolo_sam2_point_output2
 test/batch_yolo_sam2_point_output3
 test/measure_out
 logs
+data/*.sqlite3
+data/*.sqlite3-*

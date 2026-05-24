@@ -3,679 +3,759 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>钢板余料识别</title>
+  <title>钢板 DXF 批量识别</title>
   <style>
     :root {
-      --primary: hsl(181 84% 32%);
-      --primary-dark: hsl(181 84% 26%);
-      --primary-soft: hsl(181 70% 94%);
-      --bg: #f5f7f8;
-      --card: #ffffff;
+      --bg: #f4f6f8;
+      --panel: #ffffff;
       --text: #172033;
       --muted: #667085;
-      --border: #d9e2e4;
-      --danger: #c81e1e;
-      --ok: #16803a;
-      --shadow: 0 16px 40px rgba(15, 23, 42, .08);
+      --border: #d8dee5;
+      --primary: #2563eb;
+      --primary-dark: #1d4ed8;
+      --green: #15803d;
+      --amber: #b45309;
+      --red: #b91c1c;
+      --slate: #334155;
+      --soft-blue: #eff6ff;
+      --soft-green: #ecfdf3;
+      --soft-amber: #fffbeb;
+      --soft-red: #fef2f2;
+      --shadow: 0 10px 24px rgba(15, 23, 42, .07);
     }
 
-    * {
-      box-sizing: border-box;
-    }
+    * { box-sizing: border-box; }
 
     body {
       margin: 0;
       min-height: 100vh;
       font-family: Arial, "Microsoft YaHei", sans-serif;
-      background:
-        radial-gradient(circle at top left, hsl(181 84% 93%), transparent 34%),
-        linear-gradient(180deg, #f8fbfb 0%, var(--bg) 100%);
+      background: var(--bg);
       color: var(--text);
     }
 
-    .page {
-      width: min(1080px, calc(100% - 32px));
+    .app {
+      width: calc(100% - 16px);
       margin: 0 auto;
-      padding: 34px 0 46px;
+      padding: 10px 0 18px;
     }
 
-    .hero {
+    .topbar {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 18px;
-      margin-bottom: 22px;
+      gap: 16px;
+      margin-bottom: 10px;
     }
 
-    .hero h1 {
-      margin: 0 0 8px;
-      font-size: 30px;
-      line-height: 1.2;
-      letter-spacing: .02em;
-    }
-
-    .hero p {
+    h1 {
       margin: 0;
-      color: var(--muted);
-      font-size: 15px;
+      font-size: 22px;
+      line-height: 1.25;
+      letter-spacing: 0;
     }
 
-    .badge {
-      padding: 9px 13px;
-      border-radius: 999px;
-      background: var(--primary-soft);
-      color: var(--primary-dark);
-      font-weight: 700;
-      font-size: 13px;
+    .client-id {
+      color: var(--muted);
+      font-size: 12px;
       white-space: nowrap;
     }
 
-    .layout {
+    .grid {
       display: grid;
-      grid-template-columns: 390px 1fr;
-      gap: 18px;
+      grid-template-columns: 300px minmax(0, 1fr);
+      gap: 10px;
       align-items: start;
     }
 
-    .card {
-      background: var(--card);
+    .panel {
+      background: var(--panel);
       border: 1px solid var(--border);
-      border-radius: 20px;
+      border-radius: 8px;
       box-shadow: var(--shadow);
       overflow: hidden;
     }
 
-    .card-title {
-      padding: 18px 20px;
+    .panel-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 10px 12px;
       border-bottom: 1px solid var(--border);
-      font-size: 17px;
+      font-size: 15px;
       font-weight: 800;
     }
 
-    .card-body {
-      padding: 20px;
-    }
+    .panel-body { padding: 10px; }
 
     .upload-zone {
-      position: relative;
-      border: 2px dashed hsl(181 38% 72%);
-      border-radius: 18px;
-      background: linear-gradient(180deg, #ffffff, hsl(181 62% 97%));
-      min-height: 250px;
-      padding: 18px;
+      min-height: 104px;
+      border: 2px dashed #9fb2c7;
+      border-radius: 8px;
+      background: #f8fafc;
       display: flex;
       align-items: center;
       justify-content: center;
       text-align: center;
+      padding: 12px;
       cursor: pointer;
-      transition: .18s ease;
-      overflow: hidden;
+      transition: border-color .15s ease, background .15s ease;
     }
 
-    .upload-zone:hover {
+    .upload-zone:hover,
+    .upload-zone.dragging {
       border-color: var(--primary);
-      transform: translateY(-1px);
+      background: var(--soft-blue);
     }
 
-    .image-picker {
-      position: relative;
-      display: inline-block;
-      max-width: 100%;
-    }
-
-    .image-picker img {
-      max-width: 100%;
-      max-height: 330px;
-      display: block;
-      border-radius: 14px;
-    }
-
-    .upload-placeholder strong {
+    .upload-zone strong {
       display: block;
       margin-bottom: 8px;
-      font-size: 18px;
+      font-size: 16px;
     }
 
-    .upload-placeholder span {
-      color: var(--muted);
-      font-size: 13px;
-      line-height: 1.6;
-    }
-
-    .point-marker {
-      position: absolute;
-      width: 20px;
-      height: 20px;
-      border: 3px solid #ff2d2d;
-      border-radius: 50%;
-      transform: translate(-50%, -50%);
-      background: rgba(255, 45, 45, .18);
-      box-shadow: 0 0 0 5px rgba(255, 45, 45, .16);
-      pointer-events: none;
-    }
-
-    .point-marker::before,
-    .point-marker::after {
-      content: "";
-      position: absolute;
-      background: #ff2d2d;
-      left: 50%;
-      top: 50%;
-      transform: translate(-50%, -50%);
-    }
-
-    .point-marker::before {
-      width: 28px;
-      height: 2px;
-    }
-
-    .point-marker::after {
-      width: 2px;
-      height: 28px;
-    }
-
-    input[type="file"] {
-      display: none;
-    }
-
-    .point-tip {
-      margin-top: 12px;
+    .upload-zone span {
       color: var(--muted);
       font-size: 13px;
       line-height: 1.5;
     }
 
-    .btn {
+    input[type="file"] { display: none; }
+
+    .field {
+      margin-top: 8px;
+    }
+
+    .field label {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 13px;
+      font-weight: 700;
+      color: #344054;
+    }
+
+    select,
+    input[type="number"] {
       width: 100%;
-      border: 0;
-      border-radius: 14px;
-      padding: 13px 18px;
-      cursor: pointer;
+      height: 34px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 9px;
+      background: #fff;
+      color: var(--text);
       font: inherit;
-      font-size: 16px;
+    }
+
+    .checkbox-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 8px;
+      color: #344054;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .notch-options {
+      display: none;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .field-note {
+      margin-top: 8px;
+      padding: 8px 9px;
+      border-radius: 6px;
+      background: #f8fafc;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .selected-files {
+      margin-top: 8px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      max-height: 360px;
+      overflow: auto;
+      background: #fff;
+    }
+
+    .selected-files.empty {
+      border-style: dashed;
+      color: var(--muted);
+      padding: 12px;
+      font-size: 13px;
+    }
+
+    .selected-file {
+      display: grid;
+      grid-template-columns: 52px minmax(0, 1fr);
+      gap: 8px;
+      padding: 8px;
+      border-bottom: 1px solid #eef2f6;
+      font-size: 12px;
+    }
+
+    .selected-file:last-child { border-bottom: 0; }
+
+    .selected-file-name {
+      min-width: 0;
       font-weight: 800;
-      transition: .18s ease;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .selected-thumb,
+    .task-thumb {
+      width: 52px;
+      height: 42px;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      object-fit: cover;
+      background: #f8fafc;
+      display: block;
+    }
+
+    .selected-options {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px 8px;
+      margin-top: 6px;
+      color: #344054;
+    }
+
+    .selected-options label {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      min-width: 0;
+      font-size: 12px;
+    }
+
+    .selected-options input[type="number"] {
+      height: 28px;
+      padding: 4px 6px;
+      font-size: 12px;
+    }
+
+    .selected-notch-values {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+    }
+
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    button,
+    .link-btn {
+      border: 0;
+      border-radius: 6px;
+      padding: 8px 10px;
+      font: inherit;
+      font-weight: 800;
+      cursor: pointer;
+      text-decoration: none;
+      text-align: center;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 34px;
+    }
+
+    button:disabled {
+      opacity: .58;
+      cursor: not-allowed;
     }
 
     .btn-primary {
-      margin-top: 16px;
       background: var(--primary);
       color: #fff;
-      box-shadow: 0 10px 24px hsl(181 84% 32% / .22);
     }
 
-    .btn-primary:hover {
-      background: var(--primary-dark);
+    .btn-primary:hover { background: var(--primary-dark); }
+
+    .btn-muted {
+      background: #eef2f7;
+      color: var(--slate);
     }
 
-    .btn-primary:disabled {
-      opacity: .62;
-      cursor: not-allowed;
-      box-shadow: none;
+    .btn-danger {
+      background: var(--soft-red);
+      color: var(--red);
     }
 
-    .btn-secondary {
-      margin-top: 10px;
-      background: #eef5f6;
-      color: var(--primary-dark);
+    .btn-small {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 30px;
+      padding: 6px 9px;
+      font-size: 12px;
+      border-radius: 5px;
+      background: #eef2f7;
+      color: var(--slate);
+      text-decoration: none;
     }
 
-    .btn-secondary:hover {
-      background: #dff0f1;
-    }
-
-    .progress-wrap {
-      margin-top: 16px;
-      display: none;
-    }
-
-    .progress-top {
-      display: flex;
-      justify-content: space-between;
-      gap: 10px;
+    .status-box {
+      margin-top: 8px;
+      border-radius: 6px;
+      padding: 10px 11px;
+      background: #f3f5f7;
       color: var(--muted);
       font-size: 13px;
-      margin-bottom: 8px;
-    }
-
-    .progress {
-      height: 12px;
-      border-radius: 999px;
-      background: #e6eff0;
-      overflow: hidden;
-    }
-
-    .progress-bar {
-      height: 100%;
-      width: 0%;
-      border-radius: inherit;
-      background: linear-gradient(90deg, var(--primary), hsl(181 76% 43%));
-      transition: width .16s linear;
-    }
-
-    .status {
-      margin-top: 14px;
-      border-radius: 14px;
-      padding: 12px 14px;
-      background: #f4f7f8;
-      color: var(--muted);
-      font-size: 14px;
       line-height: 1.5;
       white-space: pre-wrap;
     }
 
-    .status.ok {
-      background: #ebf8ef;
-      color: var(--ok);
+    .status-box.ok { background: var(--soft-green); color: var(--green); }
+    .status-box.error { background: var(--soft-red); color: var(--red); }
+
+    .content-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(320px, 24vw);
+      gap: 10px;
     }
 
-    .status.error {
-      background: #fff0f0;
-      color: var(--danger);
+    .table-wrap {
+      overflow-y: auto;
+      overflow-x: hidden;
+      max-height: calc(100vh - 86px);
     }
 
-    .empty {
-      min-height: 310px;
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+
+    th,
+    td {
+      padding: 7px 8px;
+      border-bottom: 1px solid #edf1f5;
+      text-align: left;
+      vertical-align: top;
+      font-size: 12px;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: #f8fafc;
+      color: #475467;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    th:nth-child(1), td:nth-child(1) { width: 9%; }
+    th:nth-child(2), td:nth-child(2) { width: 24%; }
+    th:nth-child(3), td:nth-child(3) { width: 15%; }
+    th:nth-child(4), td:nth-child(4) { width: 12%; }
+    th:nth-child(5), td:nth-child(5) { width: 19%; }
+    th:nth-child(6), td:nth-child(6) { width: 11%; }
+    th:nth-child(7), td:nth-child(7) { width: 10%; }
+
+    tr.selected {
+      background: #f8fbff;
+      box-shadow: inset 3px 0 0 var(--primary);
+    }
+
+    .file-name {
+      max-width: 100%;
+      font-weight: 800;
+      color: var(--text);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .file-cell {
+      display: grid;
+      grid-template-columns: 44px minmax(0, 1fr);
+      gap: 7px;
+      align-items: start;
+    }
+
+    .file-cell .task-thumb {
+      width: 44px;
+      height: 36px;
+    }
+
+    .dxf-thumb-button {
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 2px;
+      background: #fff;
+      min-height: 0;
+      width: 62px;
+      height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .dxf-thumb-button img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+      border-radius: 3px;
+    }
+
+    .thumb-empty {
+      width: 62px;
+      height: 48px;
+      border: 1px dashed var(--border);
+      border-radius: 5px;
+      background: #f8fafc;
+      color: var(--muted);
+      font-size: 11px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      line-height: 1.2;
+    }
+
+    .subtext {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+      overflow-wrap: anywhere;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .pill.queued { background: #eef2f7; color: var(--slate); }
+    .pill.processing { background: var(--soft-amber); color: var(--amber); }
+    .pill.completed { background: var(--soft-green); color: var(--green); }
+    .pill.failed { background: var(--soft-red); color: var(--red); }
+
+    .progress {
+      width: 100%;
+      min-width: 70px;
+      height: 8px;
+      border-radius: 999px;
+      overflow: hidden;
+      background: #e6ebf1;
+      margin-top: 7px;
+    }
+
+    .progress-fill {
+      height: 100%;
+      width: 0;
+      border-radius: inherit;
+      background: var(--primary);
+      transition: width .2s ease;
+    }
+
+    .progress-fill.processing {
+      background: linear-gradient(90deg, var(--amber), #f59e0b);
+      animation: pulse 1s ease-in-out infinite alternate;
+    }
+
+    @keyframes pulse {
+      from { opacity: .62; }
+      to { opacity: 1; }
+    }
+
+    .metric-line {
+      color: #344054;
+      line-height: 1.32;
+      white-space: normal;
+    }
+
+    .preview-empty {
+      min-height: 220px;
       display: flex;
       align-items: center;
       justify-content: center;
       color: var(--muted);
       text-align: center;
-      line-height: 1.7;
-      padding: 28px;
+      line-height: 1.6;
+      padding: 16px;
+      background: #f8fafc;
+      border-radius: 8px;
     }
 
-    .metrics {
+    .dxf-preview {
+      width: 100%;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+    }
+
+    .dxf-preview img {
+      width: 100%;
+      max-height: 340px;
+      object-fit: contain;
+      display: block;
+      background: #fff;
+      border-radius: 6px;
+    }
+
+    .metric-grid {
       display: grid;
-      grid-template-columns: repeat(4, minmax(100px, 1fr));
-      gap: 10px;
-      margin-bottom: 16px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px;
+      margin: 8px 0;
     }
 
     .metric {
       border: 1px solid var(--border);
-      border-radius: 16px;
-      padding: 14px;
-      background: #fbfdfd;
+      border-radius: 6px;
+      padding: 7px;
+      background: #fff;
     }
 
     .metric .name {
       color: var(--muted);
       font-size: 12px;
-      margin-bottom: 7px;
+      margin-bottom: 5px;
     }
 
     .metric .value {
-      font-size: 20px;
       font-weight: 900;
-      color: var(--text);
-      word-break: break-all;
+      font-size: 14px;
+      word-break: break-word;
     }
 
-    .actions {
+    .download-row {
       display: flex;
       flex-wrap: wrap;
-      gap: 10px;
-      margin-bottom: 16px;
+      gap: 8px;
+      margin: 8px 0;
     }
 
     .link-btn {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 40px;
-      padding: 10px 14px;
-      border-radius: 12px;
-      text-decoration: none;
-      font-weight: 800;
-      color: #fff;
+      min-height: 34px;
       background: var(--primary);
+      color: #fff;
+      font-size: 13px;
     }
 
     .link-btn.secondary {
-      background: #425466;
+      background: var(--slate);
     }
 
-    .image-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(200px, 1fr));
-      gap: 12px;
-    }
-
-    .image-card {
+    details {
+      margin-top: 12px;
       border: 1px solid var(--border);
-      border-radius: 16px;
-      padding: 10px;
+      border-radius: 8px;
       background: #fff;
     }
 
-    .image-card h3 {
-      margin: 0 0 8px;
+    summary {
+      cursor: pointer;
+      padding: 10px 12px;
+      font-weight: 800;
       font-size: 13px;
-      color: #344054;
     }
 
-    .image-card img {
+    .debug-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+      padding: 0 12px 12px;
+    }
+
+    .debug-card {
+      border: 1px solid #edf1f5;
+      border-radius: 6px;
+      padding: 8px;
+    }
+
+    .debug-card h3 {
+      margin: 0 0 7px;
+      font-size: 12px;
+      color: #475467;
+    }
+
+    .debug-card img {
       width: 100%;
-      height: 260px;
+      max-height: 220px;
       object-fit: contain;
-      border-radius: 12px;
-      background: #f6f9fa;
       display: block;
+      background: #f8fafc;
+      border-radius: 4px;
     }
 
-    @media (max-width: 920px) {
-      .layout {
+    .empty-table {
+      padding: 38px 14px;
+      color: var(--muted);
+      text-align: center;
+      line-height: 1.6;
+    }
+
+    @media (max-width: 1180px) {
+      .grid,
+      .content-grid {
         grid-template-columns: 1fr;
       }
 
-      .hero {
+      .table-wrap {
+        max-height: none;
+      }
+    }
+
+    @media (max-width: 720px) {
+      .app {
+        width: calc(100% - 10px);
+      }
+
+      .topbar {
         align-items: flex-start;
         flex-direction: column;
       }
 
-      .metrics {
-        grid-template-columns: repeat(2, 1fr);
-      }
-
-      .image-grid {
+      .actions,
+      .notch-options,
+      .metric-grid {
         grid-template-columns: 1fr;
       }
     }
-
-    .tune-panel {
-  margin-top: 14px;
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  background: #fbfdfd;
-  padding: 14px;
-}
-
-.tune-title {
-  font-size: 14px;
-  font-weight: 800;
-  margin-bottom: 10px;
-  color: var(--text);
-}
-
-.tune-row {
-  margin-bottom: 12px;
-}
-
-.tune-row label {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  font-size: 13px;
-  color: var(--muted);
-  margin-bottom: 6px;
-}
-
-.tune-row strong {
-  color: var(--primary-dark);
-}
-
-.tune-row input[type="range"] {
-  width: 100%;
-  accent-color: var(--primary);
-}
-
-.tune-row select {
-  width: 100%;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 10px 11px;
-  background: #fff;
-  color: var(--text);
-}
-
-.notch-preview {
-  width: 100%;
-  height: 120px;
-  border: 1px dashed hsl(181 38% 72%);
-  border-radius: 14px;
-  background: #fff;
-  margin-top: 8px;
-}
   </style>
 </head>
 <body>
-  <div class="page">
-    <section class="hero">
-      <div>
-        <h1>钢板余料识别</h1>
-        <p>上传现场图片，自动识别钢板轮廓并生成 DXF 文件。</p>
-      </div>
-      <div class="badge">DXF 自动生成</div>
-    </section>
+  <div class="app">
+    <header class="topbar">
+      <h1>钢板 DXF 批量识别</h1>
+      <div class="client-id" id="clientIdText"></div>
+    </header>
 
-    <main class="layout">
-      <section class="card">
-        <div class="card-title">上传图片</div>
-        <div class="card-body">
+    <main class="grid">
+      <section class="panel">
+        <div class="panel-title">
+          <span>上传与参数</span>
+        </div>
+        <div class="panel-body">
           <form id="uploadForm">
             <div class="upload-zone" id="uploadZone">
-              <div class="upload-placeholder">
-                <strong>点击选择图片</strong>
-                <span>支持 jpg、jpeg、png、bmp、webp。请选择包含钢板和 A4 纸的图片。</span>
+              <div>
+                <strong>选择或拖入图片</strong>
+                <span>支持多选，上传后会进入当前客户端任务列表。</span>
               </div>
             </div>
+            <input id="imageInput" type="file" accept="image/*" multiple />
 
-            <input id="imageInput" type="file" accept="image/*" required />
+            <div class="selected-files empty" id="selectedFiles">尚未选择文件</div>
 
-            <div class="point-tip" id="pointTip">
-              选择图片后，可点击钢板内部任意位置作为辅助识别点。模型无法识别钢板时会使用该点。
+            <div class="field-note">
+              每张图片可单独设置透视矫正和小凹陷修复。未勾选“钢板透视”时默认使用 A4 四角。
             </div>
 
-            <button class="btn btn-secondary" id="chooseImageBtn" type="button">
-              选择图片
-            </button>
-
-            <button class="btn btn-secondary" id="clearPointBtn" type="button" style="display:none;">
-              清除辅助点
-            </button>
-
-            <div class="tune-panel">
-  <div class="tune-row">
-    <label for="perspective_source">
-      <span>透视矫正基准</span>
-    </label>
-    <select id="perspective_source" name="perspective_source">
-      <option value="a4" selected>A4四角</option>
-      <option value="plate">钢板四角</option>
-    </select>
-    <div class="hint" style="margin-top:6px;">默认使用A4四角；选择钢板四角时才使用钢板轮廓做透视矫正。</div>
-  </div>
-
-  <label class="checkbox-row" style="display:flex;align-items:center;gap:8px;cursor:pointer;">
-    <input id="enableNotchRepair" type="checkbox" />
-    <span>启用夹钳凹陷修复</span>
-  </label>
-
-  <div id="notchTuneFields" style="display:none;margin-top:12px;">
-    <div class="tune-title">夹钳凹陷修复参数</div>
-
-    <canvas id="notchPreview" class="notch-preview" width="340" height="120"></canvas>
-
-    <div class="tune-row">
-      <label>
-        <span>凹陷最大宽度</span>
-        <strong><span id="notchWidthValue">130</span> mm</strong>
-      </label>
-      <input id="notchWidth" type="range" min="30" max="600" step="10" value="130" />
-    </div>
-
-    <div class="tune-row">
-      <label>
-        <span>凹陷最大深度</span>
-        <strong><span id="notchDepthValue">60</span> mm</strong>
-      </label>
-      <input id="notchDepth" type="range" min="20" max="250" step="5" value="60" />
-    </div>
-  </div>
-</div>
-            <button class="btn btn-primary" id="submitBtn" type="submit">
-              开始识别
-            </button>
+            <div class="actions">
+              <button class="btn-primary" id="submitBtn" type="submit">上传并识别</button>
+              <button class="btn-danger" id="clearBtn" type="button">清除列表</button>
+            </div>
           </form>
 
-          <div class="progress-wrap" id="progressWrap">
-            <div class="progress-top">
-              <span id="progressText">正在处理</span>
-              <span id="progressPercent">0%</span>
-            </div>
-            <div class="progress">
-              <div class="progress-bar" id="progressBar"></div>
-            </div>
-          </div>
-
-          <div class="status" id="statusBox">请选择图片后提交。</div>
+          <div class="status-box" id="statusBox">等待选择图片。</div>
         </div>
       </section>
 
-      <section class="card">
-        <div class="card-title">识别结果</div>
-        <div class="card-body" id="resultPanel">
-          <div class="empty">暂无结果。提交图片后这里会显示尺寸、预览图和 DXF 下载按钮。</div>
-        </div>
+      <section class="content-grid">
+        <section class="panel">
+          <div class="panel-title">
+            <span>任务列表</span>
+            <button class="btn-small" id="refreshBtn" type="button">刷新</button>
+          </div>
+          <div class="table-wrap" id="taskTableWrap"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-title">
+            <span>DXF 预览</span>
+          </div>
+          <div class="panel-body" id="previewPanel">
+            <div class="preview-empty">完成识别后，这里显示最终 DXF 图形。</div>
+          </div>
+        </section>
       </section>
     </main>
   </div>
 
   <script>
     const AUTH_TOKEN = 'tk_c2VjcmV0LXJhbmRvbS10b2tlbi0xMjM0NTY3OA';
-    const SEGMENT_MS = 10000;
+    const CLIENT_KEY = 'plate_dxf_client_id';
 
-    const form = document.getElementById('uploadForm');
+    const uploadForm = document.getElementById('uploadForm');
     const imageInput = document.getElementById('imageInput');
     const uploadZone = document.getElementById('uploadZone');
-    const chooseImageBtn = document.getElementById('chooseImageBtn');
-    const clearPointBtn = document.getElementById('clearPointBtn');
-    const pointTip = document.getElementById('pointTip');
+    const selectedFilesBox = document.getElementById('selectedFiles');
     const submitBtn = document.getElementById('submitBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    const refreshBtn = document.getElementById('refreshBtn');
     const statusBox = document.getElementById('statusBox');
-    const resultPanel = document.getElementById('resultPanel');
-    const progressWrap = document.getElementById('progressWrap');
-    const progressBar = document.getElementById('progressBar');
-    const progressPercent = document.getElementById('progressPercent');
-    const progressText = document.getElementById('progressText');
+    const taskTableWrap = document.getElementById('taskTableWrap');
+    const previewPanel = document.getElementById('previewPanel');
+    const clientIdText = document.getElementById('clientIdText');
 
-    let progressTimer = null;
-    let progressStart = 0;
-    let progressSegment = 1;
-    let selectedImageUrl = '';
-    let manualPointRatio = null;
+    let selectedFiles = [];
+    let tasks = [];
+    let selectedTaskId = null;
+    let pollingTimer = null;
+    let detailOpenByTask = {};
 
-    const imageKeys = [
-      ['debug_overlay', '识别效果图'],
-      ['debug_mm_preview', '尺寸预览图'],
-      ['debug_dxf_postprocess_preview', 'DXF后处理预览'],
+    const detailImages = [
+      ['upload', '原图'],
+      ['debug_overlay', '识别叠加图'],
+      ['debug_mm_preview', '尺寸预览'],
+      ['debug_dxf_postprocess_preview', 'DXF 后处理预览'],
       ['topdown_image', '俯视图'],
+      ['topdown_overlay', '俯视叠加图'],
       ['plate_final_with_paper_fill', '钢板 mask'],
       ['paper_mask', 'A4 mask']
     ];
 
-    const notchPreview = document.getElementById('notchPreview');
-
-    const notchWidth = document.getElementById('notchWidth');
-    const notchDepth = document.getElementById('notchDepth');
-
-    const notchWidthValue = document.getElementById('notchWidthValue');
-    const notchDepthValue = document.getElementById('notchDepthValue');
-    const enableNotchRepair = document.getElementById('enableNotchRepair');
-
-    const notchTuneFields = document.getElementById('notchTuneFields');
-
-    enableNotchRepair.addEventListener('change', () => {
-      notchTuneFields.style.display = enableNotchRepair.checked ? 'block' : 'none';
-
-      if (enableNotchRepair.checked) {
-        drawNotchPreview();
+    function getClientId() {
+      let id = localStorage.getItem(CLIENT_KEY);
+      if (!id) {
+        id = (crypto.randomUUID ? crypto.randomUUID() : `client_${Date.now()}_${Math.random().toString(16).slice(2)}`)
+          .replace(/[^A-Za-z0-9_-]/g, '_');
+        localStorage.setItem(CLIENT_KEY, id);
       }
-    });
-
-    function drawNotchPreview() {
-      const ctx = notchPreview.getContext('2d');
-      const w = notchPreview.width;
-      const h = notchPreview.height;
-
-      const maxWidth = Number(notchWidth.value);
-      const maxDepth = Number(notchDepth.value);
-
-      notchWidthValue.textContent = maxWidth;
-      notchDepthValue.textContent = maxDepth;
-
-      ctx.clearRect(0, 0, w, h);
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, w, h);
-
-      const baseY = 42;
-      const centerX = w / 2;
-
-      const widthPx = Math.min(180, Math.max(40, maxWidth / 3));
-      const depthPx = Math.min(70, Math.max(10, maxDepth / 2.5));
-
-      const leftX = centerX - widthPx / 2;
-      const rightX = centerX + widthPx / 2;
-
-      ctx.strokeStyle = '#d0d7de';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(24, baseY);
-      ctx.lineTo(w - 24, baseY);
-      ctx.stroke();
-
-      ctx.strokeStyle = 'hsl(181 84% 32%)';
-      ctx.lineWidth = 4;
-      ctx.beginPath();
-      ctx.moveTo(24, baseY);
-      ctx.lineTo(leftX, baseY);
-      ctx.lineTo(leftX + widthPx * 0.25, baseY + depthPx);
-      ctx.lineTo(rightX - widthPx * 0.25, baseY + depthPx);
-      ctx.lineTo(rightX, baseY);
-      ctx.lineTo(w - 24, baseY);
-      ctx.stroke();
-
-      ctx.strokeStyle = '#ff2d2d';
-      ctx.lineWidth = 2;
-      ctx.setLineDash([6, 4]);
-      ctx.beginPath();
-      ctx.moveTo(leftX, baseY);
-      ctx.lineTo(rightX, baseY);
-      ctx.stroke();
-      ctx.setLineDash([]);
-
-      ctx.fillStyle = '#667085';
-      ctx.font = '12px Arial';
-      ctx.fillText(`最大宽度 ${maxWidth}mm`, 12, h - 30);
-      ctx.fillText(`最大深度 ${maxDepth}mm`, 12, h - 12);
-
-      ctx.fillStyle = 'hsl(181 84% 26%)';
-      ctx.fillText('红线表示修复后的直边', w - 150, h - 12);
+      return id;
     }
 
-    [
-      notchWidth,
-      notchDepth,
-    ].forEach(el => {
-      el.addEventListener('input', drawNotchPreview);
-    });
+    const clientId = getClientId();
+    clientIdText.textContent = `客户端：${clientId}`;
 
-    drawNotchPreview();
+    function apiHeaders() {
+      return {
+        'X-Auth-Token': AUTH_TOKEN,
+        'X-Client-Id': clientId
+      };
+    }
 
-
-    function escapeHtml(text) {
-      return String(text)
+    function escapeHtml(value) {
+      return String(value ?? '')
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#039;');
-    }
-
-    function setStatus(text, type) {
-      statusBox.className = 'status' + (type ? ' ' + type : '');
-      statusBox.textContent = text;
     }
 
     function resolveUrl(url) {
@@ -685,92 +765,106 @@
       return window.location.origin + '/' + url.replace(/^\/+/, '');
     }
 
-    function setProgress(value, text) {
-      const percent = Math.max(0, Math.min(100, Math.round(value)));
-      progressBar.style.width = percent + '%';
-      progressPercent.textContent = percent + '%';
-      if (text) progressText.textContent = text;
+    function setStatus(text, type = '') {
+      statusBox.className = `status-box${type ? ' ' + type : ''}`;
+      statusBox.textContent = text;
     }
 
-    function startProgress() {
-      clearInterval(progressTimer);
-      progressWrap.style.display = 'block';
-      progressStart = Date.now();
-      progressSegment = 1;
-      setProgress(0, '正在处理...');
-
-      progressTimer = setInterval(() => {
-        const elapsed = Date.now() - progressStart;
-        const currentSegment = Math.floor(elapsed / SEGMENT_MS) + 1;
-
-        if (currentSegment !== progressSegment) {
-          progressSegment = currentSegment;
-          progressText.textContent = '正在处理...';
-        }
-
-        const inSegment = elapsed % SEGMENT_MS;
-        const percent = (inSegment / SEGMENT_MS) * 100;
-        setProgress(percent);
-      }, 120);
+    function formatSize(bytes) {
+      const value = Number(bytes || 0);
+      if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(2)} MB`;
+      if (value >= 1024) return `${(value / 1024).toFixed(1)} KB`;
+      return `${value} B`;
     }
 
-    function finishProgress(success) {
-      clearInterval(progressTimer);
-      progressTimer = null;
-      setProgress(100, success ? '处理完成' : '处理结束');
+    function formatDate(value) {
+      if (!value) return '-';
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return '-';
+      return date.toLocaleString();
     }
 
-    function renderUploadPreview() {
-      if (!selectedImageUrl) {
-        uploadZone.innerHTML = `
-          <div class="upload-placeholder">
-            <strong>点击选择图片</strong>
-            <span>支持 jpg、jpeg、png、bmp、webp。请选择包含钢板和 A4 纸的图片。</span>
-          </div>
-        `;
+    function statusText(status) {
+      return {
+        queued: '等待中',
+        processing: '处理中',
+        completed: '已完成',
+        failed: '失败'
+      }[status] || status || '-';
+    }
 
-        clearPointBtn.style.display = 'none';
-        pointTip.textContent = '选择图片后，可点击钢板内部任意位置作为辅助识别点。YOLO无法识别钢板时会使用该点。';
+    function progressValue(task) {
+      const base = Number(task.progress || 0);
+      if (task.status !== 'processing') return Math.max(0, Math.min(100, base));
+      const tick = Math.floor((Date.now() / 700) % 18);
+      return Math.max(base, Math.min(92, base + tick));
+    }
+
+    function makeSelectedFileItems(files) {
+      selectedFiles.forEach(item => {
+        if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+      });
+
+      return Array.from(files || []).map((file, index) => ({
+        id: `file_${Date.now()}_${index}_${Math.random().toString(16).slice(2)}`,
+        file,
+        previewUrl: URL.createObjectURL(file),
+        usePlatePerspective: false,
+        enableNotchRepair: false,
+        notchWidth: 80,
+        notchDepth: 25
+      }));
+    }
+
+    function renderSelectedFiles() {
+      if (!selectedFiles.length) {
+        selectedFilesBox.className = 'selected-files empty';
+        selectedFilesBox.textContent = '尚未选择文件';
         return;
       }
 
-      const markerHtml = manualPointRatio
-        ? `<div class="point-marker" style="left:${manualPointRatio.x * 100}%;top:${manualPointRatio.y * 100}%;"></div>`
-        : '';
-
-      uploadZone.innerHTML = `
-        <div class="image-picker">
-          <img id="previewImage" src="${selectedImageUrl}" alt="图片预览" />
-          ${markerHtml}
+      selectedFilesBox.className = 'selected-files';
+      selectedFilesBox.innerHTML = selectedFiles.map(item => `
+        <div class="selected-file" data-file-id="${escapeHtml(item.id)}">
+          <img class="selected-thumb" src="${escapeHtml(item.previewUrl)}" alt="${escapeHtml(item.file.name)}">
+          <div>
+            <div class="selected-file-name" title="${escapeHtml(item.file.name)}">${escapeHtml(item.file.name)}</div>
+            <div class="subtext">${escapeHtml(formatSize(item.file.size))}</div>
+            <div class="selected-options">
+              <label>
+                <input type="checkbox" data-file-option="usePlatePerspective" ${item.usePlatePerspective ? 'checked' : ''}>
+                <span>钢板透视</span>
+              </label>
+              <label>
+                <input type="checkbox" data-file-option="enableNotchRepair" ${item.enableNotchRepair ? 'checked' : ''}>
+                <span>小凹修复</span>
+              </label>
+              ${item.enableNotchRepair ? `
+                <div class="selected-notch-values">
+                  <input type="number" min="30" max="600" step="10" value="${escapeHtml(item.notchWidth)}" data-file-option="notchWidth" title="最大宽度 mm">
+                  <input type="number" min="10" max="250" step="5" value="${escapeHtml(item.notchDepth)}" data-file-option="notchDepth" title="最大深度 mm">
+                </div>
+              ` : ''}
+            </div>
+          </div>
         </div>
-      `;
-
-      clearPointBtn.style.display = manualPointRatio ? 'block' : 'none';
-
-      if (manualPointRatio) {
-        pointTip.textContent = `已选择辅助点：x=${manualPointRatio.x.toFixed(4)}, y=${manualPointRatio.y.toFixed(4)}。再次点击图片可重新选择。`;
-      } else {
-        pointTip.textContent = '可点击钢板内部任意位置作为辅助识别点。未点击时，接口仍按默认逻辑识别。';
-      }
+      `).join('');
     }
 
     function buildFormData() {
-      const file = imageInput.files[0];
-      if (!file) {
+      if (!selectedFiles.length) {
         throw new Error('请先选择图片');
       }
 
       const fd = new FormData();
-
-      fd.append('image', file);
+      selectedFiles.forEach(item => fd.append('images', item.file));
       fd.append('yolo_input_mode', 'canonical_path');
       fd.append('plate_class', 'plate');
       fd.append('paper_class', 'paper');
       fd.append('paper_source', 'yolo');
-      // fd.append('paper_source', 'sam2');
       fd.append('paper_sam2_yolo_fallback', 'false');
       fd.append('a4_orientation', 'auto');
-      fd.append('perspective_source', document.getElementById('perspective_source').value);
+      fd.append('perspective_source', 'a4');
       fd.append('paper_rect_mode', 'approx_poly');
       fd.append('simplify_mm', '3.0');
       fd.append('topdown_mm_per_px', '2.0');
@@ -778,32 +872,189 @@
       fd.append('imgsz', '1280');
       fd.append('conf', '0.35');
       fd.append('sam_model', 'sam2');
-
-      if (manualPointRatio) {
-        fd.append(
-          'user_point_ratio',
-          `${manualPointRatio.x.toFixed(6)},${manualPointRatio.y.toFixed(6)}`
-        );
-      }
-
       fd.append('dxf_postprocess_enabled', 'true');
-
-      fd.append('dxf_postprocess_enabled', 'true');
-      fd.append('dxf_notch_fill_enabled', enableNotchRepair.checked ? 'true' : 'false');
-
-      if (enableNotchRepair.checked) {
-        fd.append('dxf_notch_fill_max_width_mm', notchWidth.value);
-        fd.append('dxf_notch_fill_max_depth_mm', notchDepth.value);
-      }
+      fd.append('dxf_notch_fill_enabled', 'false');
+      fd.append('per_file_options', JSON.stringify(selectedFiles.map(item => ({
+        filename: item.file.name,
+        use_plate_perspective: Boolean(item.usePlatePerspective),
+        dxf_notch_fill_enabled: Boolean(item.enableNotchRepair),
+        dxf_notch_fill_max_width_mm: Number(item.notchWidth || 80),
+        dxf_notch_fill_max_depth_mm: Number(item.notchDepth || 25)
+      }))));
 
       return fd;
     }
 
-    function metric(name, value, suffix) {
+    async function fetchJson(url, options = {}) {
+      const response = await fetch(url, options);
+      const contentType = response.headers.get('content-type') || '';
+      const data = contentType.includes('application/json')
+        ? await response.json()
+        : await response.text();
+
+      if (!response.ok) {
+        const message = typeof data === 'string' ? data : (data.detail || JSON.stringify(data));
+        throw new Error(message);
+      }
+
+      return data;
+    }
+
+    async function loadTasks(silent = false) {
+      try {
+        const data = await fetchJson('/tasks', { headers: apiHeaders() });
+        tasks = data.tasks || [];
+
+        if (!selectedTaskId || !tasks.some(task => task.id === selectedTaskId)) {
+          const firstCompleted = tasks.find(task => task.status === 'completed');
+          selectedTaskId = firstCompleted ? firstCompleted.id : (tasks[0] ? tasks[0].id : null);
+        }
+
+        renderTasks();
+        renderPreview();
+        updatePolling();
+
+        if (!silent) {
+          setStatus(`已加载 ${tasks.length} 个任务。`, 'ok');
+        }
+      } catch (error) {
+        setStatus(`加载任务失败：${error.message || error}`, 'error');
+      }
+    }
+
+    function updatePolling() {
+      const hasRunning = tasks.some(task => task.status === 'queued' || task.status === 'processing');
+      if (hasRunning && !pollingTimer) {
+        pollingTimer = setInterval(() => loadTasks(true), 2000);
+      } else if (!hasRunning && pollingTimer) {
+        clearInterval(pollingTimer);
+        pollingTimer = null;
+      }
+    }
+
+    function dimensionsText(dims) {
+      if (!dims || Object.keys(dims).length === 0) return '-';
+      const length = dims.length_mm ?? dims.max_length_mm;
+      const width = dims.width_mm ?? dims.max_width_mm;
+      const area = dims.area_m2;
+      return `
+        <div class="metric-line">长：${escapeHtml(valueWithUnit(length, 'mm'))}</div>
+        <div class="metric-line">宽：${escapeHtml(valueWithUnit(width, 'mm'))}</div>
+        <div class="metric-line">面积：${escapeHtml(valueWithUnit(area, 'm²'))}</div>
+      `;
+    }
+
+    function geometryText(task) {
+      const counts = task.dxf_geometry && task.dxf_geometry.entity_type_counts;
+      if (!counts || Object.keys(counts).length === 0) return '-';
+      return Object.entries(counts)
+        .map(([key, value]) => `${key}:${value}`)
+        .join(' ');
+    }
+
+    function valueWithUnit(value, unit) {
+      if (value === undefined || value === null || value === '') return '-';
+      return `${value} ${unit}`;
+    }
+
+    function taskSettingText(task) {
+      const params = task.params || {};
+      const perspective = params.perspective_source === 'plate' ? '钢板透视' : 'A4透视';
+      const notch = params.dxf_notch_fill_enabled ? '小凹修复' : '无修复';
+      return `${perspective} · ${notch}`;
+    }
+
+    function renderTaskDxfThumb(task) {
+      const previewUrl = task.urls && task.urls.dxf_preview ? resolveUrl(task.urls.dxf_preview) : '';
+      if (!previewUrl) {
+        return `<div class="thumb-empty">${task.status === 'completed' ? '无预览' : statusText(task.status)}</div>`;
+      }
+
+      return `
+        <button class="dxf-thumb-button" type="button" data-action="preview" data-id="${escapeHtml(task.id)}" title="查看 DXF 图形">
+          <img src="${escapeHtml(previewUrl)}" alt="DXF 图形" loading="lazy">
+        </button>
+      `;
+    }
+
+    function renderFileCell(task) {
+      const uploadUrl = task.urls && task.urls.upload ? resolveUrl(task.urls.upload) : '';
+      return `
+        <div class="file-cell">
+          ${uploadUrl
+            ? `<img class="task-thumb" src="${escapeHtml(uploadUrl)}" alt="${escapeHtml(task.filename)}" loading="lazy">`
+            : '<div class="task-thumb"></div>'}
+          <div>
+            <div class="file-name" title="${escapeHtml(task.filename)}">${escapeHtml(task.filename)}</div>
+            <div class="subtext">${escapeHtml(formatSize(task.size_bytes))} · ${escapeHtml(formatDate(task.created_at))}</div>
+            <div class="subtext">${escapeHtml(taskSettingText(task))}</div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderTasks() {
+      if (!tasks.length) {
+        taskTableWrap.innerHTML = '<div class="empty-table">当前客户端暂无上传任务。</div>';
+        return;
+      }
+
+      const rows = tasks.map(task => {
+        const progress = progressValue(task);
+        const dxfUrl = task.urls && task.urls.dxf ? resolveUrl(task.urls.dxf) : '';
+        const isSelected = task.id === selectedTaskId;
+
+        return `
+          <tr class="${isSelected ? 'selected' : ''}">
+            <td>${renderTaskDxfThumb(task)}</td>
+            <td>
+              ${renderFileCell(task)}
+            </td>
+            <td>
+              <span class="pill ${escapeHtml(task.status)}">${escapeHtml(statusText(task.status))}</span>
+              <div class="subtext">${escapeHtml(task.message || '')}</div>
+            </td>
+            <td>
+              <div>${progress}%</div>
+              <div class="progress">
+                <div class="progress-fill ${task.status === 'processing' ? 'processing' : ''}" style="width:${progress}%"></div>
+              </div>
+            </td>
+            <td>${dimensionsText(task.plate_dimensions)}</td>
+            <td>
+              <div>${escapeHtml(geometryText(task))}</div>
+              <div class="subtext">${escapeHtml(task.dxf_geometry && task.dxf_geometry.entity_count ? `实体 ${task.dxf_geometry.entity_count}` : '')}</div>
+            </td>
+            <td>
+              <button class="btn-small" type="button" data-action="preview" data-id="${escapeHtml(task.id)}">预览</button>
+              ${dxfUrl ? `<a class="btn-small" href="${escapeHtml(dxfUrl)}" download>DXF</a>` : ''}
+            </td>
+          </tr>
+        `;
+      }).join('');
+
+      taskTableWrap.innerHTML = `
+        <table>
+          <thead>
+            <tr>
+              <th>图形</th>
+              <th>文件</th>
+              <th>状态</th>
+              <th>进度</th>
+              <th>尺寸</th>
+              <th>DXF</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      `;
+    }
+
+    function metric(name, value, suffix = '') {
       const shown = value === undefined || value === null || value === ''
         ? '-'
-        : String(value) + (suffix || '');
-
+        : `${value}${suffix}`;
       return `
         <div class="metric">
           <div class="name">${escapeHtml(name)}</div>
@@ -812,33 +1063,52 @@
       `;
     }
 
-    function renderImages(urls) {
-      const cards = imageKeys
-        .filter(([key]) => urls && urls[key])
-        .map(([key, title]) => {
-          const fullUrl = resolveUrl(urls[key]);
-          return `
-            <div class="image-card">
-              <h3>${escapeHtml(title)}</h3>
-              <a href="${escapeHtml(fullUrl)}" target="_blank">
-                <img src="${escapeHtml(fullUrl)}" alt="${escapeHtml(title)}" loading="lazy" />
-              </a>
+    function renderPreview() {
+      const task = tasks.find(item => item.id === selectedTaskId);
+      if (!task) {
+        previewPanel.innerHTML = '<div class="preview-empty">完成识别后，这里显示最终 DXF 图形。</div>';
+        return;
+      }
+
+      if (task.status === 'failed') {
+        previewPanel.innerHTML = `
+          <div class="preview-empty">
+            <div>
+              <strong>${escapeHtml(task.filename)}</strong><br>
+              识别失败：${escapeHtml(task.message || '未知错误')}
             </div>
-          `;
-        })
-        .join('');
+          </div>
+        `;
+        return;
+      }
 
-      return cards ? `<div class="image-grid">${cards}</div>` : '';
-    }
+      if (task.status !== 'completed') {
+        previewPanel.innerHTML = `
+          <div class="preview-empty">
+            <div>
+              <strong>${escapeHtml(task.filename)}</strong><br>
+              ${escapeHtml(statusText(task.status))}，当前进度 ${progressValue(task)}%
+            </div>
+          </div>
+        `;
+        return;
+      }
 
-    function renderResult(data) {
-      const dims = data.plate_dimensions || {};
-      const urls = data.urls || {};
+      const dims = task.plate_dimensions || {};
+      const urls = task.urls || {};
+      const previewUrl = urls.dxf_preview ? resolveUrl(urls.dxf_preview) : '';
       const dxfUrl = urls.dxf ? resolveUrl(urls.dxf) : '';
       const jsonUrl = urls.result_json ? resolveUrl(urls.result_json) : '';
+      const detailsOpen = detailOpenByTask[task.id] ? ' open' : '';
 
-      resultPanel.innerHTML = `
-        <div class="metrics">
+      previewPanel.innerHTML = `
+        <div class="dxf-preview">
+          ${previewUrl
+            ? `<a href="${escapeHtml(previewUrl)}" target="_blank"><img src="${escapeHtml(previewUrl)}" alt="DXF 预览"></a>`
+            : '<div class="preview-empty">没有生成 DXF 预览图，可直接下载 DXF。</div>'}
+        </div>
+
+        <div class="metric-grid">
           ${metric('最大长度', dims.length_mm, ' mm')}
           ${metric('最大宽度', dims.width_mm, ' mm')}
           ${metric('最小长度', dims.min_length_mm, ' mm')}
@@ -847,124 +1117,155 @@
           ${metric('周长', dims.perimeter_mm, ' mm')}
         </div>
 
-        <div class="actions">
+        <div class="download-row">
           ${dxfUrl ? `<a class="link-btn" href="${escapeHtml(dxfUrl)}" download>下载 DXF</a>` : ''}
-          ${jsonUrl ? `<a class="link-btn secondary" href="${escapeHtml(jsonUrl)}" download>下载结果 JSON</a>` : ''}
+          ${jsonUrl ? `<a class="link-btn secondary" href="${escapeHtml(jsonUrl)}" download>结果 JSON</a>` : ''}
         </div>
 
-        ${renderImages(urls)}
+        <details data-task-detail="${escapeHtml(task.id)}"${detailsOpen}>
+          <summary>详情图片</summary>
+          ${renderDetailImages(urls)}
+        </details>
       `;
     }
 
-    chooseImageBtn.addEventListener('click', () => {
-      imageInput.click();
+    function renderDetailImages(urls) {
+      const cards = detailImages
+        .filter(([key]) => urls && urls[key])
+        .map(([key, title]) => {
+          const url = resolveUrl(urls[key]);
+          return `
+            <div class="debug-card">
+              <h3>${escapeHtml(title)}</h3>
+              <a href="${escapeHtml(url)}" target="_blank">
+                <img src="${escapeHtml(url)}" alt="${escapeHtml(title)}" loading="lazy">
+              </a>
+            </div>
+          `;
+        }).join('');
+
+      return cards ? `<div class="debug-grid">${cards}</div>` : '<div class="debug-grid"><div class="subtext">暂无详情图片。</div></div>';
+    }
+
+    uploadZone.addEventListener('click', () => imageInput.click());
+
+    uploadZone.addEventListener('dragover', event => {
+      event.preventDefault();
+      uploadZone.classList.add('dragging');
+    });
+
+    uploadZone.addEventListener('dragleave', () => {
+      uploadZone.classList.remove('dragging');
+    });
+
+    uploadZone.addEventListener('drop', event => {
+      event.preventDefault();
+      uploadZone.classList.remove('dragging');
+      selectedFiles = makeSelectedFileItems(Array.from(event.dataTransfer.files || []).filter(file => file.type.startsWith('image/')));
+      renderSelectedFiles();
+      setStatus(selectedFiles.length ? `已选择 ${selectedFiles.length} 张图片。` : '未检测到图片文件。');
     });
 
     imageInput.addEventListener('change', () => {
-      const file = imageInput.files[0];
-
-      if (!file) {
-        selectedImageUrl = '';
-        manualPointRatio = null;
-        renderUploadPreview();
-        setStatus('请选择图片后提交。');
-        return;
-      }
-
-      if (selectedImageUrl) {
-        URL.revokeObjectURL(selectedImageUrl);
-      }
-
-      selectedImageUrl = URL.createObjectURL(file);
-      manualPointRatio = null;
-
-      renderUploadPreview();
-      setStatus('图片已选择。可直接识别，也可以点击钢板内部位置作为辅助点。');
+      selectedFiles = makeSelectedFileItems(imageInput.files || []);
+      renderSelectedFiles();
+      setStatus(selectedFiles.length ? `已选择 ${selectedFiles.length} 张图片。` : '等待选择图片。');
     });
 
-    uploadZone.addEventListener('click', (event) => {
-      const file = imageInput.files[0];
+    selectedFilesBox.addEventListener('change', event => {
+      const target = event.target;
+      const option = target && target.dataset ? target.dataset.fileOption : '';
+      if (!option) return;
 
-      if (!file) {
-        imageInput.click();
-        return;
+      const row = target.closest('[data-file-id]');
+      const item = row ? selectedFiles.find(file => file.id === row.dataset.fileId) : null;
+      if (!item) return;
+
+      if (option === 'usePlatePerspective') {
+        item.usePlatePerspective = target.checked;
+      } else if (option === 'enableNotchRepair') {
+        item.enableNotchRepair = target.checked;
+      } else if (option === 'notchWidth') {
+        item.notchWidth = Number(target.value || 80);
+      } else if (option === 'notchDepth') {
+        item.notchDepth = Number(target.value || 25);
       }
 
-      const img = document.getElementById('previewImage');
-      if (!img) {
-        return;
+      if (option === 'enableNotchRepair') {
+        renderSelectedFiles();
       }
-
-      const rect = img.getBoundingClientRect();
-      const x = (event.clientX - rect.left) / rect.width;
-      const y = (event.clientY - rect.top) / rect.height;
-
-      if (x < 0 || x > 1 || y < 0 || y > 1) {
-        return;
-      }
-
-      manualPointRatio = {
-        x: Math.max(0, Math.min(1, x)),
-        y: Math.max(0, Math.min(1, y)),
-      };
-
-      renderUploadPreview();
-      setStatus(`已选择钢板辅助点：${manualPointRatio.x.toFixed(4)},${manualPointRatio.y.toFixed(4)}。提交后会传给接口。`);
     });
 
-    clearPointBtn.addEventListener('click', () => {
-      manualPointRatio = null;
-      renderUploadPreview();
-      setStatus('已清除辅助点。');
-    });
-
-    form.addEventListener('submit', async (event) => {
+    uploadForm.addEventListener('submit', async event => {
       event.preventDefault();
-
       submitBtn.disabled = true;
-      submitBtn.textContent = '识别中...';
-      resultPanel.innerHTML = '<div class="empty">正在识别，请不要关闭页面。</div>';
-      setStatus('正在上传并识别图片。');
-      startProgress();
+      submitBtn.textContent = '上传中';
+      setStatus('正在上传并创建任务...');
 
       try {
-        const response = await fetch('/measure', {
+        const data = await fetchJson('/tasks/upload', {
           method: 'POST',
-          headers: {
-            'X-Auth-Token': AUTH_TOKEN,
-          },
-          body: buildFormData(),
+          headers: apiHeaders(),
+          body: buildFormData()
         });
 
-        const contentType = response.headers.get('content-type') || '';
-        const data = contentType.includes('application/json')
-          ? await response.json()
-          : await response.text();
-
-        if (!response.ok) {
-          const message = typeof data === 'string'
-            ? data
-            : (data.detail || JSON.stringify(data));
-          throw new Error(message);
-        }
-
-        finishProgress(true);
-        renderResult(data);
-        setStatus('识别完成。', 'ok');
+        selectedFiles.forEach(item => {
+          if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+        });
+        selectedFiles = [];
+        imageInput.value = '';
+        renderSelectedFiles();
+        setStatus(`已创建 ${data.tasks.length} 个识别任务。`, 'ok');
+        await loadTasks(true);
       } catch (error) {
-        finishProgress(false);
-
-        const message = error && error.message
-          ? error.message
-          : String(error);
-
-        resultPanel.innerHTML = `<div class="empty">处理失败：${escapeHtml(message)}</div>`;
-        setStatus('处理失败：' + message, 'error');
+        setStatus(`上传失败：${error.message || error}`, 'error');
       } finally {
         submitBtn.disabled = false;
-        submitBtn.textContent = '开始识别';
+        submitBtn.textContent = '上传并识别';
       }
     });
+
+    refreshBtn.addEventListener('click', () => loadTasks(false));
+
+    clearBtn.addEventListener('click', async () => {
+      if (!confirm('确认清除当前客户端的全部上传记录和结果文件？')) {
+        return;
+      }
+
+      clearBtn.disabled = true;
+      try {
+        const data = await fetchJson('/tasks', {
+          method: 'DELETE',
+          headers: apiHeaders()
+        });
+        tasks = [];
+        selectedTaskId = null;
+        renderTasks();
+        renderPreview();
+        setStatus(`已清除 ${data.deleted} 条任务。`, 'ok');
+      } catch (error) {
+        setStatus(`清除失败：${error.message || error}`, 'error');
+      } finally {
+        clearBtn.disabled = false;
+      }
+    });
+
+    taskTableWrap.addEventListener('click', event => {
+      const target = event.target.closest('[data-action="preview"]');
+      if (!target) return;
+      selectedTaskId = target.dataset.id;
+      renderTasks();
+      renderPreview();
+    });
+
+    previewPanel.addEventListener('toggle', event => {
+      const target = event.target;
+      if (!target.matches || !target.matches('details[data-task-detail]')) return;
+      detailOpenByTask[target.dataset.taskDetail] = target.open;
+    }, true);
+
+    renderSelectedFiles();
+    loadTasks(true);
   </script>
 </body>
 </html>

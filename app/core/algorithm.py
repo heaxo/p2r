@@ -2460,11 +2460,20 @@ def process_one_image(args) -> Dict[str, Any]:
             args.simplify_mm,
         )
 
+        dxf_postprocess_defaults = DxfPostProcessConfig()
         dxf_postprocess_config = DxfPostProcessConfig(
             enabled=bool(getattr(args, "dxf_postprocess_enabled", True)),
             notch_fill_enabled=bool(getattr(args, "dxf_notch_fill_enabled", True)),
-            notch_fill_max_width_mm=float(getattr(args, "dxf_notch_fill_max_width_mm", 280.0)),
-            notch_fill_max_depth_mm=float(getattr(args, "dxf_notch_fill_max_depth_mm", 90.0)),
+            notch_fill_max_width_mm=float(getattr(
+                args,
+                "dxf_notch_fill_max_width_mm",
+                dxf_postprocess_defaults.notch_fill_max_width_mm,
+            )),
+            notch_fill_max_depth_mm=float(getattr(
+                args,
+                "dxf_notch_fill_max_depth_mm",
+                dxf_postprocess_defaults.notch_fill_max_depth_mm,
+            )),
         )
 
         plate_contour_mm, dxf_postprocess_info = postprocess_plate_contour_mm(
