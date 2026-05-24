@@ -89,6 +89,7 @@ class MeasureService:
             paper_source: str,
             paper_sam2_yolo_fallback: bool,
             a4_orientation: str,
+            perspective_source: str,
             paper_points: str | None,
             paper_rect_mode: str,
             simplify_mm: float,
@@ -104,7 +105,7 @@ class MeasureService:
         selected_model_path = Path(model_path) if model_path else self.settings.model_path
         logger.info(
             "Building measure args: image_path={}, model_path={}, sam_model={}, imgsz={}, conf={}, "
-            "paper_source={}, a4_orientation={}, paper_rect_mode={}",
+            "paper_source={}, a4_orientation={}, perspective_source={}, paper_rect_mode={}",
             image_path,
             selected_model_path,
             sam_model or self.settings.sam_model,
@@ -112,6 +113,7 @@ class MeasureService:
             conf if conf is not None else self.settings.default_conf,
             paper_source,
             a4_orientation,
+            perspective_source,
             paper_rect_mode,
         )
         yolo_model = model_cache.get(selected_model_path)
@@ -130,6 +132,7 @@ class MeasureService:
             paper_source=paper_source,
             paper_sam2_yolo_fallback=paper_sam2_yolo_fallback,
             a4_orientation=a4_orientation,
+            perspective_source=perspective_source,
             paper_points=paper_points,
             paper_rect_mode=paper_rect_mode,
             simplify_mm=float(simplify_mm),

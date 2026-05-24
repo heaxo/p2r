@@ -1260,6 +1260,149 @@ def _score_quad_candidate(quad: np.ndarray, contour: np.ndarray) -> float:
     return float(area_penalty + slender_penalty)
 
 
+def _a4_size_for_quad_orientation(
+    paper_quad_img: np.ndarray,
+    orientation: str = "auto",
+) -> Tuple[float, float, str]:
+    quad = order_quad_points(paper_quad_img)
+    top = float(np.linalg.norm(quad[1] - quad[0]))
+    bottom = float(np.linalg.norm(quad[2] - quad[3]))
+    left = float(np.linalg.norm(quad[3] - quad[0]))
+    right = float(np.linalg.norm(quad[2] - quad[1]))
+    img_w = (top + bottom) / 2.0
+    img_h = (left + right) / 2.0
+
+    mode = (orientation or "auto").strip().lower()
+    if mode == "landscape":
+        return 297.0, 210.0, "landscape"
+    if mode == "portrait":
+        return 210.0, 297.0, "portrait"
+    if mode == "auto":
+        if img_w >= img_h:
+            return 297.0, 210.0, "landscape"
+        return 210.0, 297.0, "portrait"
+    raise ValueError("--a4-orientation 只能是 auto / landscape / portrait")
+
+
+def _evaluate_paper_quad_rectification(
+    paper_mask: np.ndarray,
+    paper_quad_px: np.ndarray,
+    orientation: str = "auto",
+    scale_px_per_mm: float = 3.0,
+    padding_mm: float = 20.0,
+) -> Dict[str, Any]:
+    quad = order_quad_points(paper_quad_px)
+    real_w_mm, real_h_mm, used_orientation = _a4_size_for_quad_orientation(quad, orientation)
+    scale = max(0.5, float(scale_px_per_mm))
+    pad_px = max(4, int(round(float(padding_mm) * scale)))
+    expected_w = max(10, int(round(real_w_mm * scale)))
+    expected_h = max(10, int(round(real_h_mm * scale)))
+    dst_w = expected_w + pad_px * 2
+    dst_h = expected_h + pad_px * 2
+
+    dst_quad_px = np.array([
+        [pad_px, pad_px],
+        [pad_px + expected_w, pad_px],
+        [pad_px + expected_w, pad_px + expected_h],
+        [pad_px, pad_px + expected_h],
+    ], dtype=np.float32)
+
+    try:
+        h_mat = cv2.getPerspectiveTransform(quad.astype(np.float32), dst_quad_px)
+        warped = cv2.warpPerspective(
+            ((_binary_mask(paper_mask) > 0).astype(np.uint8) * 255),
+            h_mat,
+            (dst_w, dst_h),
+            flags=cv2.INTER_NEAREST,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=0,
+        )
+    except Exception as exc:
+        return {
+            "ok": False,
+            "score": 0.0,
+            "reason": str(exc),
+            "orientation": used_orientation,
+        }
+
+    bin_mask = (warped > 0).astype(np.uint8)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+    bin_mask = cv2.morphologyEx(bin_mask, cv2.MORPH_CLOSE, kernel)
+    bin_mask = _keep_largest_component(bin_mask)
+
+    expected = np.zeros_like(bin_mask, dtype=np.uint8)
+    cv2.rectangle(
+        expected,
+        (pad_px, pad_px),
+        (pad_px + expected_w - 1, pad_px + expected_h - 1),
+        1,
+        thickness=-1,
+    )
+
+    paper_area = int(bin_mask.sum())
+    expected_area = max(1, int(expected.sum()))
+    if paper_area <= 0:
+        return {
+            "ok": False,
+            "score": 0.0,
+            "reason": "warped paper mask empty",
+            "orientation": used_orientation,
+            "expected_size_px": [int(expected_w), int(expected_h)],
+        }
+
+    overlap = int(((bin_mask > 0) & (expected > 0)).sum())
+    union = max(1, int(((bin_mask > 0) | (expected > 0)).sum()))
+    outside = max(0, paper_area - overlap)
+    missing = max(0, expected_area - overlap)
+
+    iou = float(overlap / union)
+    inside_ratio = float(overlap / max(1, paper_area))
+    fill_ratio = float(overlap / expected_area)
+    outside_ratio = float(outside / max(1, paper_area))
+    missing_ratio = float(missing / expected_area)
+
+    ys, xs = np.where(bin_mask > 0)
+    bbox_error_ratio = 1.0
+    bbox_px = None
+    if len(xs) > 0 and len(ys) > 0:
+        x_min = float(np.percentile(xs, 1))
+        x_max = float(np.percentile(xs, 99))
+        y_min = float(np.percentile(ys, 1))
+        y_max = float(np.percentile(ys, 99))
+        bbox_px = [round(x_min, 3), round(y_min, 3), round(x_max, 3), round(y_max, 3)]
+        bbox_error_ratio = max(
+            abs(x_min - pad_px) / max(1.0, expected_w),
+            abs(x_max - (pad_px + expected_w - 1)) / max(1.0, expected_w),
+            abs(y_min - pad_px) / max(1.0, expected_h),
+            abs(y_max - (pad_px + expected_h - 1)) / max(1.0, expected_h),
+        )
+
+    bbox_score = max(0.0, 1.0 - min(1.0, bbox_error_ratio * 4.0))
+    score = (
+        iou * 0.55
+        + min(inside_ratio, fill_ratio) * 0.30
+        + bbox_score * 0.15
+        - outside_ratio * 0.20
+    )
+    score = max(0.0, min(1.0, float(score)))
+
+    return {
+        "ok": True,
+        "score": round(score, 6),
+        "orientation": used_orientation,
+        "iou": round(iou, 6),
+        "inside_ratio": round(inside_ratio, 6),
+        "fill_ratio": round(fill_ratio, 6),
+        "outside_ratio": round(outside_ratio, 6),
+        "missing_ratio": round(missing_ratio, 6),
+        "bbox_error_ratio": round(float(bbox_error_ratio), 6),
+        "bbox_px": bbox_px,
+        "expected_size_px": [int(expected_w), int(expected_h)],
+        "paper_area_px": int(paper_area),
+        "expected_area_px": int(expected_area),
+    }
+
+
 def _try_quad_from_contour_perspective(contour: np.ndarray) -> Tuple[Optional[np.ndarray], Dict[str, Any]]:
     """
     从 paper contour 中提取透视四边形。
@@ -1300,6 +1443,92 @@ def _try_quad_from_contour_perspective(contour: np.ndarray) -> Tuple[Optional[np
     return None, {"quad_source": "none_approx_poly_failed"}
 
 
+def _select_quad_by_rectification_quality(
+    contour: np.ndarray,
+    paper_mask: np.ndarray,
+    mode: str,
+) -> Tuple[Optional[np.ndarray], Dict[str, Any]]:
+    cnt = np.asarray(contour, dtype=np.float32).reshape(-1, 2)
+    if len(cnt) < 4:
+        return None, {"rectification_selection": "none_contour_too_few_points"}
+
+    cnt_i = cnt.astype(np.int32).reshape(-1, 1, 2)
+    hull = cv2.convexHull(cnt_i)
+    peri = cv2.arcLength(hull, True)
+    if peri <= 1:
+        return None, {"rectification_selection": "none_invalid_perimeter"}
+
+    candidates: List[Dict[str, Any]] = []
+    seen = set()
+
+    for ratio in np.linspace(0.003, 0.12, 60):
+        approx = cv2.approxPolyDP(hull, float(ratio) * peri, True)
+        if len(approx) != 4 or not cv2.isContourConvex(approx):
+            continue
+        quad = order_quad_points(approx.reshape(4, 2).astype(np.float32))
+        key = tuple((round(float(x), 1), round(float(y), 1)) for x, y in quad)
+        if key in seen:
+            continue
+        seen.add(key)
+        contour_score = _score_quad_candidate(quad, cnt_i)
+        quality = _evaluate_paper_quad_rectification(
+            paper_mask=paper_mask,
+            paper_quad_px=quad,
+            orientation="auto",
+            scale_px_per_mm=2.0,
+            padding_mm=10.0,
+        )
+        combined_score = float(quality.get("score", 0.0)) - min(0.20, contour_score * 0.03)
+        candidates.append({
+            "quad": quad,
+            "source": f"convex_hull_approx_poly_{ratio:.4f}",
+            "contour_score": float(contour_score),
+            "quality": quality,
+            "combined_score": combined_score,
+        })
+
+    if mode in {"min_area_rect"} or not candidates:
+        rect = cv2.minAreaRect(contour.astype(np.float32))
+        rect_quad = order_quad_points(cv2.boxPoints(rect).astype(np.float32))
+        rect_quality = _evaluate_paper_quad_rectification(
+            paper_mask=paper_mask,
+            paper_quad_px=rect_quad,
+            orientation="auto",
+            scale_px_per_mm=2.0,
+            padding_mm=10.0,
+        )
+        candidates.append({
+            "quad": rect_quad,
+            "source": "min_area_rect",
+            "contour_score": _score_quad_candidate(rect_quad, cnt_i),
+            "quality": rect_quality,
+            "combined_score": float(rect_quality.get("score", 0.0)) - 0.08,
+        })
+
+    if not candidates:
+        return None, {"rectification_selection": "none_no_candidates"}
+
+    candidates.sort(key=lambda item: item["combined_score"], reverse=True)
+    best = candidates[0]
+    return best["quad"], {
+        "rectification_selection": "enabled",
+        "rectification_candidate_count": int(len(candidates)),
+        "quad_source": best["source"],
+        "quad_score": float(best["contour_score"]),
+        "quad_rectification_quality": best["quality"],
+        "quad_rectification_combined_score": round(float(best["combined_score"]), 6),
+        "quad_candidate_summaries": [
+            {
+                "source": str(item["source"]),
+                "combined_score": round(float(item["combined_score"]), 6),
+                "quality_score": item["quality"].get("score"),
+                "contour_score": round(float(item["contour_score"]), 6),
+            }
+            for item in candidates[:5]
+        ],
+    }
+
+
 def find_paper_quad_from_mask(paper_mask: np.ndarray, mode: str = "approx_poly") -> Tuple[np.ndarray, Dict[str, Any], np.ndarray]:
     """
     从 paper mask 得到 A4 四角。返回 ordered TL/TR/BR/BL。
@@ -1331,7 +1560,9 @@ def find_paper_quad_from_mask(paper_mask: np.ndarray, mode: str = "approx_poly")
 
     # robust_fit 现在也优先保留透视四边形，不再直接 minAreaRect。
     if mode in {"approx_poly", "robust_fit", "raw"}:
-        quad, quad_info = _try_quad_from_contour_perspective(contour)
+        quad, quad_info = _select_quad_by_rectification_quality(contour, mask_for_rect, mode)
+        if quad is None:
+            quad, quad_info = _try_quad_from_contour_perspective(contour)
         info.update(quad_info)
 
     if quad is None:
@@ -1363,32 +1594,96 @@ def find_paper_quad_from_mask(paper_mask: np.ndarray, mode: str = "approx_poly")
         info["warning"] = "A4四角使用了minAreaRect兜底，透视精度可能下降；建议传 --paper-points 使用更准确的4个A4角点。"
     return quad, info, mask_for_rect
 
+
+def find_plate_quad_from_contour(plate_contour: np.ndarray) -> Tuple[np.ndarray, Dict[str, Any]]:
+    contour = np.asarray(plate_contour, dtype=np.float32).reshape(-1, 1, 2)
+    if len(contour) < 4:
+        raise RuntimeError("cannot extract plate perspective quad: contour has fewer than 4 points")
+
+    quad, info = _try_quad_from_contour_perspective(contour)
+    fallback_used = False
+    if quad is None:
+        rect = cv2.minAreaRect(contour)
+        quad = cv2.boxPoints(rect).astype(np.float32)
+        info = {
+            "quad_source": "plate_min_area_rect_fallback",
+            "rect_center_px": [float(rect[0][0]), float(rect[0][1])],
+            "rect_size_px": [float(rect[1][0]), float(rect[1][1])],
+            "rect_angle_deg": float(rect[2]),
+        }
+        fallback_used = True
+
+    quad = order_quad_points(quad)
+    contour_area = max(1.0, float(abs(cv2.contourArea(contour))))
+    quad_area = max(1.0, float(abs(cv2.contourArea(quad.reshape(-1, 1, 2)))))
+    fill_ratio = contour_area / quad_area
+    edges = [
+        float(np.linalg.norm(quad[1] - quad[0])),
+        float(np.linalg.norm(quad[2] - quad[1])),
+        float(np.linalg.norm(quad[2] - quad[3])),
+        float(np.linalg.norm(quad[3] - quad[0])),
+    ]
+    info.update({
+        "quad_source": "plate_" + str(info.get("quad_source", "unknown")),
+        "quad_fallback": "min_area_rect" if fallback_used else None,
+        "plate_quad_px_tl_tr_br_bl": np.round(quad, 3).tolist(),
+        "plate_quad_area_px2": round(float(quad_area), 3),
+        "plate_contour_area_px2": round(float(contour_area), 3),
+        "plate_fill_ratio_in_quad": round(float(fill_ratio), 6),
+        "plate_edge_lengths_px": {
+            "top": round(edges[0], 3),
+            "right": round(edges[1], 3),
+            "bottom": round(edges[2], 3),
+            "left": round(edges[3], 3),
+        },
+    })
+    return quad.astype(np.float32), info
+
+
+def build_plate_homography_from_quad(
+    plate_quad_px: np.ndarray,
+    calibration_H_px_to_mm: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray, Tuple[float, float], Dict[str, Any]]:
+    plate_quad_px = order_quad_points(plate_quad_px)
+    plate_quad_mm_est = transform_points_px_to_mm(plate_quad_px, calibration_H_px_to_mm)
+    plate_quad_mm_est = order_quad_points(plate_quad_mm_est)
+
+    top = float(np.linalg.norm(plate_quad_mm_est[1] - plate_quad_mm_est[0]))
+    right = float(np.linalg.norm(plate_quad_mm_est[2] - plate_quad_mm_est[1]))
+    bottom = float(np.linalg.norm(plate_quad_mm_est[2] - plate_quad_mm_est[3]))
+    left = float(np.linalg.norm(plate_quad_mm_est[3] - plate_quad_mm_est[0]))
+    target_w = max(1.0, (top + bottom) / 2.0)
+    target_h = max(1.0, (left + right) / 2.0)
+
+    plate_rect_mm = np.array([
+        [0.0, 0.0],
+        [target_w, 0.0],
+        [target_w, target_h],
+        [0.0, target_h],
+    ], dtype=np.float32)
+    H = cv2.getPerspectiveTransform(plate_quad_px.astype(np.float32), plate_rect_mm)
+    info = {
+        "enabled": True,
+        "source": "plate_quad",
+        "scale_reference": "a4_homography_estimated_plate_quad_size",
+        "note": "Perspective source points use the plate quad. Because the plate's real dimensions are unknown, target rectangle size is estimated from the A4 calibration homography.",
+        "plate_quad_px_tl_tr_br_bl": np.round(plate_quad_px, 3).tolist(),
+        "plate_quad_mm_estimated_by_a4": np.round(plate_quad_mm_est, 3).tolist(),
+        "target_width_mm": round(float(target_w), 3),
+        "target_height_mm": round(float(target_h), 3),
+        "estimated_edge_lengths_mm": {
+            "top": round(top, 3),
+            "right": round(right, 3),
+            "bottom": round(bottom, 3),
+            "left": round(left, 3),
+        },
+    }
+    return H, plate_rect_mm, (target_w, target_h), info
+
+
 def build_a4_homography(paper_quad_img: np.ndarray, orientation: str = "auto") -> Tuple[np.ndarray, np.ndarray, Tuple[float, float], str]:
     paper_quad_img = order_quad_points(paper_quad_img)
-    top = np.linalg.norm(paper_quad_img[1] - paper_quad_img[0])
-    bottom = np.linalg.norm(paper_quad_img[2] - paper_quad_img[3])
-    left = np.linalg.norm(paper_quad_img[3] - paper_quad_img[0])
-    right = np.linalg.norm(paper_quad_img[2] - paper_quad_img[1])
-    img_w = (top + bottom) / 2.0
-    img_h = (left + right) / 2.0
-
-    orientation = orientation.strip().lower()
-    if orientation == "landscape":
-        real_w, real_h = 297.0, 210.0
-        used_orientation = "landscape"
-    elif orientation == "portrait":
-        real_w, real_h = 210.0, 297.0
-        used_orientation = "portrait"
-    elif orientation == "auto":
-        if img_w >= img_h:
-            real_w, real_h = 297.0, 210.0
-            used_orientation = "landscape"
-        else:
-            real_w, real_h = 210.0, 297.0
-            used_orientation = "portrait"
-    else:
-        raise ValueError("--a4-orientation 只能是 auto / landscape / portrait")
-
+    real_w, real_h, used_orientation = _a4_size_for_quad_orientation(paper_quad_img, orientation)
     paper_quad_mm = np.array([[0.0, 0.0], [real_w, 0.0], [real_w, real_h], [0.0, real_h]], dtype=np.float32)
     H = cv2.getPerspectiveTransform(paper_quad_img.astype(np.float32), paper_quad_mm.astype(np.float32))
     return H, paper_quad_mm, (real_w, real_h), used_orientation
@@ -1559,7 +1854,7 @@ def save_topdown_warp_outputs(
     padding_mm: float = 50.0,
 ) -> Dict[str, Any]:
     """
-    基于 A4 Homography，把原图和最终钢板 mask 透视展开成俯视图。
+    基于当前透视 Homography，把原图和最终钢板 mask 透视展开成俯视图。
 
     H_px_to_mm:
         原图像素坐标 -> 真实毫米坐标 的矩阵
@@ -2051,7 +2346,7 @@ def process_one_image(args) -> Dict[str, Any]:
 
     plate_contour_px = plate_outer_contour.reshape(-1, 2).astype(np.float32)
 
-    H, paper_quad_mm, a4_size, used_orientation = build_a4_homography(
+    H_a4, a4_paper_quad_mm, a4_size, used_orientation = build_a4_homography(
         paper_quad_px,
         orientation=args.a4_orientation,
     )
@@ -2061,6 +2356,39 @@ def process_one_image(args) -> Dict[str, Any]:
         used_orientation,
         a4_size,
     )
+
+    perspective_source = str(getattr(args, "perspective_source", "a4") or "a4").strip().lower()
+    if perspective_source not in {"a4", "plate"}:
+        raise ValueError("--perspective-source 只能是 a4 / plate")
+
+    H = H_a4
+    paper_quad_mm = a4_paper_quad_mm
+    perspective_info: Dict[str, Any] = {
+        "enabled": True,
+        "requested_source": perspective_source,
+        "source": "a4_quad",
+        "scale_reference": "a4_real_size",
+        "a4_size_mm": [round(float(a4_size[0]), 3), round(float(a4_size[1]), 3)],
+        "paper_quad_px_tl_tr_br_bl": np.round(order_quad_points(paper_quad_px), 3).tolist(),
+        "paper_quad_mm_tl_tr_br_bl": np.round(paper_quad_mm, 3).tolist(),
+    }
+
+    if perspective_source == "plate":
+        plate_quad_px, plate_quad_info = find_plate_quad_from_contour(plate_outer_contour)
+        H, plate_rect_mm, plate_rect_size, perspective_info = build_plate_homography_from_quad(
+            plate_quad_px=plate_quad_px,
+            calibration_H_px_to_mm=H_a4,
+        )
+        perspective_info["requested_source"] = perspective_source
+        perspective_info["quad_info"] = plate_quad_info
+        paper_quad_mm = transform_points_px_to_mm(paper_quad_px, H)
+        logger.info(
+            "Plate-based perspective homography selected: plate_rect_size_mm={}, quad_source={}",
+            plate_rect_size,
+            plate_quad_info.get("quad_source"),
+        )
+    else:
+        logger.info("A4-based perspective homography selected")
 
     plate_contour_mm_raw = transform_points_px_to_mm(plate_contour_px, H)
 
@@ -2250,6 +2578,7 @@ def process_one_image(args) -> Dict[str, Any]:
         "paper": paper_info,
         "plate": {
             "point_info": json_safe(clean_plate_point_info),
+            "perspective": json_safe(perspective_info),
         },
         "fill_paper_to_plate": fill_info,
         "a4": {
@@ -2321,6 +2650,14 @@ def refine_paper_quad_by_a4_rect(
         real_w_mm, real_h_mm = 210.0, 297.0
     else:
         real_w_mm, real_h_mm = 297.0, 210.0
+
+    original_quality = _evaluate_paper_quad_rectification(
+        paper_mask=paper_mask,
+        paper_quad_px=paper_quad_px,
+        orientation=orientation,
+        scale_px_per_mm=scale_px_per_mm,
+        padding_mm=padding_mm,
+    )
 
     pad_px = int(round(padding_mm * scale_px_per_mm))
     dst_w = int(round(real_w_mm * scale_px_per_mm)) + pad_px * 2
@@ -2394,8 +2731,52 @@ def refine_paper_quad_by_a4_rect(
 
     corrected_quad = order_quad_points(corrected_quad)
 
-    return corrected_quad.astype(np.float32), {
-        "refined": True,
+    refined_quality = _evaluate_paper_quad_rectification(
+        paper_mask=paper_mask,
+        paper_quad_px=corrected_quad,
+        orientation=orientation,
+        scale_px_per_mm=scale_px_per_mm,
+        padding_mm=padding_mm,
+    )
+
+    edge_lengths = [
+        float(np.linalg.norm(paper_quad_px[1] - paper_quad_px[0])),
+        float(np.linalg.norm(paper_quad_px[2] - paper_quad_px[1])),
+        float(np.linalg.norm(paper_quad_px[2] - paper_quad_px[3])),
+        float(np.linalg.norm(paper_quad_px[3] - paper_quad_px[0])),
+    ]
+    max_edge = max(1.0, max(edge_lengths))
+    corner_moves = np.linalg.norm(corrected_quad - paper_quad_px, axis=1)
+    max_corner_move = float(np.max(corner_moves))
+    max_corner_move_ratio = float(max_corner_move / max_edge)
+
+    original_score = float(original_quality.get("score", 0.0))
+    refined_score = float(refined_quality.get("score", 0.0))
+    original_outside = float(original_quality.get("outside_ratio", 1.0))
+    refined_outside = float(refined_quality.get("outside_ratio", 1.0))
+    accepted = (
+        bool(refined_quality.get("ok"))
+        and refined_score >= original_score + 0.015
+        and refined_outside <= original_outside + 0.03
+        and max_corner_move_ratio <= 0.18
+    )
+    selected_quad = corrected_quad if accepted else paper_quad_px
+
+    reject_reason = None
+    if not accepted:
+        if not refined_quality.get("ok"):
+            reject_reason = "refined_quad_quality_invalid"
+        elif refined_score < original_score + 0.015:
+            reject_reason = "refined_quality_not_better"
+        elif refined_outside > original_outside + 0.03:
+            reject_reason = "refined_outside_ratio_worse"
+        elif max_corner_move_ratio > 0.18:
+            reject_reason = "refined_corner_move_too_large"
+
+    return selected_quad.astype(np.float32), {
+        "refined": bool(accepted),
+        "candidate_generated": True,
+        "reject_reason": reject_reason,
         "orientation": orientation,
         "real_w_mm": real_w_mm,
         "real_h_mm": real_h_mm,
@@ -2406,4 +2787,9 @@ def refine_paper_quad_by_a4_rect(
         "expected_h_px": round(float(expected_h), 2),
         "old_quad_px": np.round(paper_quad_px, 3).tolist(),
         "corrected_quad_px": np.round(corrected_quad, 3).tolist(),
+        "selected_quad_px": np.round(selected_quad, 3).tolist(),
+        "max_corner_move_px": round(float(max_corner_move), 3),
+        "max_corner_move_ratio": round(float(max_corner_move_ratio), 6),
+        "quality_before": original_quality,
+        "quality_candidate": refined_quality,
     }

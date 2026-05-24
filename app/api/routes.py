@@ -48,6 +48,7 @@ async def measure(
     paper_source: Annotated[str, Form(description="paper mask来源：yolo或sam2")]= "yolo",
     paper_sam2_yolo_fallback: Annotated[bool, Form(description="paper_source=sam2失败时是否退回YOLO")]=False,
     a4_orientation: Annotated[str, Form(description="A4方向：auto、landscape、portrait")]= "auto",
+    perspective_source: Annotated[str, Form(description="透视矫正基准：a4 或 plate")]= "a4",
     paper_points: Annotated[str | None, Form(description="可选，A4四角坐标 x1,y1;x2,y2;x3,y3;x4,y4")]=None,
     paper_rect_mode: Annotated[str, Form(description="paper四角拟合方式")]= "approx_poly",
     simplify_mm: Annotated[float, Form(description="DXF轮廓简化精度，单位mm")]=3.0,
@@ -65,7 +66,7 @@ async def measure(
     logger.info(
         "Measure request received: filename={}, model_path={}, sam_model={}, imgsz={}, conf={}, "
         "yolo_input_mode={}, plate_class={}, paper_class={}, paper_source={}, a4_orientation={}, "
-        "paper_rect_mode={}, simplify_mm={}, dxf_postprocess_enabled={}",
+        "perspective_source={}, paper_rect_mode={}, simplify_mm={}, dxf_postprocess_enabled={}",
         original_filename,
         model_path,
         sam_model,
@@ -76,6 +77,7 @@ async def measure(
         paper_class,
         paper_source,
         a4_orientation,
+        perspective_source,
         paper_rect_mode,
         simplify_mm,
         dxf_postprocess_enabled,
@@ -84,6 +86,7 @@ async def measure(
     _validate_choice(yolo_input_mode, {"canonical_path", "rgb_array", "bgr_array"}, "yolo_input_mode")
     _validate_choice(paper_source, {"yolo", "sam2"}, "paper_source")
     _validate_choice(a4_orientation, {"auto", "landscape", "portrait"}, "a4_orientation")
+    _validate_choice(perspective_source, {"a4", "plate"}, "perspective_source")
     _validate_choice(paper_rect_mode, {"robust_fit", "approx_poly", "min_area_rect", "raw"}, "paper_rect_mode")
 
     try:
@@ -103,6 +106,7 @@ async def measure(
             paper_source=paper_source,
             paper_sam2_yolo_fallback=paper_sam2_yolo_fallback,
             a4_orientation=a4_orientation,
+            perspective_source=perspective_source,
             paper_points=paper_points,
             paper_rect_mode=paper_rect_mode,
             simplify_mm=simplify_mm,

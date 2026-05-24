@@ -32,6 +32,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--paper-source", default="yolo", choices=["yolo", "sam2"] ,help="paper mask 来源：yolo=直接使用YOLO的paper mask/box；sam2=YOLO找paper内部点后交给SAM2。默认yolo")
     parser.add_argument("--paper-sam2-yolo-fallback", action="store_true" , help="当 --paper-source=sam2 且 SAM2 失败时，是否退回 YOLO paper mask/box")
     parser.add_argument("--a4-orientation", default="auto", choices=["auto", "landscape", "portrait"], help="A4方向。横放建议 landscape")
+    parser.add_argument("--perspective-source", default="a4", choices=["a4", "plate"], help="透视矫正基准：a4=使用A4四角；plate=使用钢板四角")
     parser.add_argument("--paper-points", default=None, help="可选：直接传入A4四角坐标，格式 x1,y1;x2,y2;x3,y3;x4,y4")
     parser.add_argument("--paper-rect-mode", default="approx_poly", choices=["robust_fit", "approx_poly", "min_area_rect", "raw"], help="从 paper mask 拟合 A4 四角的方法。默认 approx_poly，优先保留A4透视四边形；min_area_rect只建议兜底。")
     parser.add_argument("--simplify-mm", type=float, default=3.0, help="DXF轮廓简化精度，单位mm。越大点越少，默认3mm")

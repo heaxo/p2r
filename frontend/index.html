@@ -420,6 +420,15 @@
   accent-color: var(--primary);
 }
 
+.tune-row select {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 11px;
+  background: #fff;
+  color: var(--text);
+}
+
 .notch-preview {
   width: 100%;
   height: 120px;
@@ -467,6 +476,17 @@
             </button>
 
             <div class="tune-panel">
+  <div class="tune-row">
+    <label for="perspective_source">
+      <span>透视矫正基准</span>
+    </label>
+    <select id="perspective_source" name="perspective_source">
+      <option value="a4" selected>A4四角</option>
+      <option value="plate">钢板四角</option>
+    </select>
+    <div class="hint" style="margin-top:6px;">默认使用A4四角；选择钢板四角时才使用钢板轮廓做透视矫正。</div>
+  </div>
+
   <label class="checkbox-row" style="display:flex;align-items:center;gap:8px;cursor:pointer;">
     <input id="enableNotchRepair" type="checkbox" />
     <span>启用夹钳凹陷修复</span>
@@ -750,6 +770,7 @@
       // fd.append('paper_source', 'sam2');
       fd.append('paper_sam2_yolo_fallback', 'false');
       fd.append('a4_orientation', 'auto');
+      fd.append('perspective_source', document.getElementById('perspective_source').value);
       fd.append('paper_rect_mode', 'approx_poly');
       fd.append('simplify_mm', '3.0');
       fd.append('topdown_mm_per_px', '2.0');

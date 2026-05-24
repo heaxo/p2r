@@ -481,6 +481,14 @@
             </div>
 
             <div class="field">
+              <label for="perspective_source">透视矫正基准</label>
+              <select id="perspective_source" name="perspective_source">
+                <option value="a4" selected>A4四角</option>
+                <option value="plate">钢板四角</option>
+              </select>
+            </div>
+
+            <div class="field">
               <label for="paper_source">paper来源</label>
               <select id="paper_source" name="paper_source">
                 <option value="yolo" selected>yolo</option>
@@ -813,6 +821,7 @@
         'paper_class',
         'paper_source',
         'a4_orientation',
+        'perspective_source',
         'paper_rect_mode',
         'simplify_mm',
         'topdown_mm_per_px',
