@@ -1847,19 +1847,43 @@ def scale_contour_to_target_xy(
     contour_mm: np.ndarray,
     target_x_mm: Optional[float],
     target_y_mm: Optional[float],
+    target_size_1_mm: Optional[float] = None,
+    target_size_2_mm: Optional[float] = None,
 ) -> Tuple[np.ndarray, Dict[str, Any]]:
     pts = np.asarray(contour_mm, dtype=np.float32).reshape(-1, 2)
     target_x = optional_positive_mm(target_x_mm, "dxf_target_x_mm")
     target_y = optional_positive_mm(target_y_mm, "dxf_target_y_mm")
+    target_size_1 = optional_positive_mm(target_size_1_mm, "dxf_target_size_1_mm")
+    target_size_2 = optional_positive_mm(target_size_2_mm, "dxf_target_size_2_mm")
+
+    if (target_size_1 is None) != (target_size_2 is None):
+        raise ValueError("目标尺寸1和目标尺寸2必须同时填写，或同时留空")
 
     min_xy = np.min(pts, axis=0).astype(np.float64)
     max_xy = np.max(pts, axis=0).astype(np.float64)
     current_x = float(max_xy[0] - min_xy[0])
     current_y = float(max_xy[1] - min_xy[1])
+    target_source = "none"
+
+    if target_size_1 is not None and target_size_2 is not None:
+        small = min(float(target_size_1), float(target_size_2))
+        large = max(float(target_size_1), float(target_size_2))
+        if current_x >= current_y:
+            target_x = large
+            target_y = small
+        else:
+            target_x = small
+            target_y = large
+        target_source = "unordered_size_pair"
+    elif target_x is not None or target_y is not None:
+        target_source = "explicit_xy"
 
     info: Dict[str, Any] = {
         "enabled": bool(target_x is not None or target_y is not None),
-        "mode": "axis_bbox_xy",
+        "mode": "unordered_pair_to_axis_bbox_xy" if target_source == "unordered_size_pair" else "axis_bbox_xy",
+        "target_source": target_source,
+        "target_size_1_mm": round(float(target_size_1), 3) if target_size_1 is not None else None,
+        "target_size_2_mm": round(float(target_size_2), 3) if target_size_2 is not None else None,
         "target_x_mm": round(float(target_x), 3) if target_x is not None else None,
         "target_y_mm": round(float(target_y), 3) if target_y is not None else None,
         "source_x_mm": round(current_x, 3),
@@ -2456,6 +2480,8 @@ def process_one_image(args) -> Dict[str, Any]:
     plate_contour_mm_raw = transform_points_px_to_mm(plate_contour_px, H)
     dxf_target_x_mm = getattr(args, "dxf_target_x_mm", None)
     dxf_target_y_mm = getattr(args, "dxf_target_y_mm", None)
+    dxf_target_size_1_mm = getattr(args, "dxf_target_size_1_mm", None)
+    dxf_target_size_2_mm = getattr(args, "dxf_target_size_2_mm", None)
 
     # 先用原始mm轮廓判断是否接近圆形。
     # 注意：圆形检测必须放在 simplify_contour_mm 和 DXF后处理之前。
@@ -2510,6 +2536,8 @@ def process_one_image(args) -> Dict[str, Any]:
             plate_contour_mm,
             dxf_target_x_mm,
             dxf_target_y_mm,
+            dxf_target_size_1_mm,
+            dxf_target_size_2_mm,
         )
 
         if dxf_target_size_info.get("enabled"):
@@ -2592,6 +2620,8 @@ def process_one_image(args) -> Dict[str, Any]:
             plate_contour_mm,
             dxf_target_x_mm,
             dxf_target_y_mm,
+            dxf_target_size_1_mm,
+            dxf_target_size_2_mm,
         )
         dims = calc_dimensions(plate_contour_mm)
         dims["dxf_target_size"] = dxf_target_size_info

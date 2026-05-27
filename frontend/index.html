@@ -274,6 +274,10 @@
       color: var(--text);
     }
 
+    .selected-size-values.explicit-size-values {
+      background: #fff;
+    }
+
     .selected-notch-values {
       grid-column: 1 / -1;
       display: grid;
@@ -695,7 +699,7 @@
             <div class="selected-files empty" id="selectedFiles">尚未选择文件</div>
 
             <div class="field-note">
-              每张图片可单独设置透视矫正、小凹陷修复和目标 X/Y 尺寸；目标尺寸留空时按识别结果生成。
+              优先填写“目标尺寸1/2”，系统会自动把较大值匹配到识别后较大的 X/Y 方向；留空时可使用指定 X/Y。
             </div>
 
             <div class="actions">
@@ -851,6 +855,8 @@
         enableNotchRepair: false,
         notchWidth: 80,
         notchDepth: 25,
+        targetSize1: '',
+        targetSize2: '',
         targetX: '',
         targetY: ''
       }));
@@ -881,11 +887,21 @@
               </label>
               <div class="selected-size-values">
                 <label class="selected-number-field">
-                  <span>目标 X(mm)</span>
+                  <span>目标尺寸1(mm)</span>
+                  <input type="number" min="1" step="1" value="${escapeHtml(item.targetSize1)}" placeholder="自动匹配" data-file-option="targetSize1">
+                </label>
+                <label class="selected-number-field">
+                  <span>目标尺寸2(mm)</span>
+                  <input type="number" min="1" step="1" value="${escapeHtml(item.targetSize2)}" placeholder="自动匹配" data-file-option="targetSize2">
+                </label>
+              </div>
+              <div class="selected-size-values explicit-size-values">
+                <label class="selected-number-field">
+                  <span>指定 X(mm)</span>
                   <input type="number" min="1" step="1" value="${escapeHtml(item.targetX)}" placeholder="自动" data-file-option="targetX">
                 </label>
                 <label class="selected-number-field">
-                  <span>目标 Y(mm)</span>
+                  <span>指定 Y(mm)</span>
                   <input type="number" min="1" step="1" value="${escapeHtml(item.targetY)}" placeholder="自动" data-file-option="targetY">
                 </label>
               </div>
@@ -934,15 +950,25 @@
       fd.append('sam_model', 'sam2');
       fd.append('dxf_postprocess_enabled', 'true');
       fd.append('dxf_notch_fill_enabled', 'false');
-      fd.append('per_file_options', JSON.stringify(selectedFiles.map(item => ({
-        filename: item.file.name,
-        use_plate_perspective: Boolean(item.usePlatePerspective),
-        dxf_notch_fill_enabled: Boolean(item.enableNotchRepair),
-        dxf_notch_fill_max_width_mm: Number(item.notchWidth || 80),
-        dxf_notch_fill_max_depth_mm: Number(item.notchDepth || 25),
-        dxf_target_x_mm: optionalPositiveNumber(item.targetX, `${item.file.name} 目标X尺寸`),
-        dxf_target_y_mm: optionalPositiveNumber(item.targetY, `${item.file.name} 目标Y尺寸`)
-      }))));
+      fd.append('per_file_options', JSON.stringify(selectedFiles.map(item => {
+        const targetSize1 = optionalPositiveNumber(item.targetSize1, `${item.file.name} 目标尺寸1`);
+        const targetSize2 = optionalPositiveNumber(item.targetSize2, `${item.file.name} 目标尺寸2`);
+        if ((targetSize1 === null) !== (targetSize2 === null)) {
+          throw new Error(`${item.file.name} 的目标尺寸1和目标尺寸2必须同时填写`);
+        }
+
+        return {
+          filename: item.file.name,
+          use_plate_perspective: Boolean(item.usePlatePerspective),
+          dxf_notch_fill_enabled: Boolean(item.enableNotchRepair),
+          dxf_notch_fill_max_width_mm: Number(item.notchWidth || 80),
+          dxf_notch_fill_max_depth_mm: Number(item.notchDepth || 25),
+          dxf_target_size_1_mm: targetSize1,
+          dxf_target_size_2_mm: targetSize2,
+          dxf_target_x_mm: optionalPositiveNumber(item.targetX, `${item.file.name} 目标X尺寸`),
+          dxf_target_y_mm: optionalPositiveNumber(item.targetY, `${item.file.name} 目标Y尺寸`)
+        };
+      })));
 
       return fd;
     }
@@ -1100,9 +1126,13 @@
       const params = task.params || {};
       const perspective = params.perspective_source === 'plate' ? '钢板透视' : 'A4透视';
       const notch = params.dxf_notch_fill_enabled ? '小凹修复' : '无修复';
+      const size1 = params.dxf_target_size_1_mm;
+      const size2 = params.dxf_target_size_2_mm;
       const targetX = params.dxf_target_x_mm;
       const targetY = params.dxf_target_y_mm;
-      const targetText = (targetX || targetY)
+      const targetText = (size1 && size2)
+        ? ` · 目标尺寸 ${size1}/${size2}mm`
+        : (targetX || targetY)
         ? ` · 目标X/Y ${targetX || '自动'}/${targetY || '自动'}mm`
         : '';
       return `${perspective} · ${notch}${targetText}`;
@@ -1335,6 +1365,10 @@
         item.notchWidth = Number(target.value || 80);
       } else if (option === 'notchDepth') {
         item.notchDepth = Number(target.value || 25);
+      } else if (option === 'targetSize1') {
+        item.targetSize1 = target.value;
+      } else if (option === 'targetSize2') {
+        item.targetSize2 = target.value;
       } else if (option === 'targetX') {
         item.targetX = target.value;
       } else if (option === 'targetY') {
@@ -1349,12 +1383,21 @@
     selectedFilesBox.addEventListener('input', event => {
       const target = event.target;
       const option = target && target.dataset ? target.dataset.fileOption : '';
-      if (option !== 'targetX' && option !== 'targetY' && option !== 'notchWidth' && option !== 'notchDepth') return;
+      if (
+        option !== 'targetSize1'
+        && option !== 'targetSize2'
+        && option !== 'targetX'
+        && option !== 'targetY'
+        && option !== 'notchWidth'
+        && option !== 'notchDepth'
+      ) return;
 
       const row = target.closest('[data-file-id]');
       const item = row ? selectedFiles.find(file => file.id === row.dataset.fileId) : null;
       if (!item) return;
 
+      if (option === 'targetSize1') item.targetSize1 = target.value;
+      if (option === 'targetSize2') item.targetSize2 = target.value;
       if (option === 'targetX') item.targetX = target.value;
       if (option === 'targetY') item.targetY = target.value;
       if (option === 'notchWidth') item.notchWidth = Number(target.value || 80);

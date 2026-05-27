@@ -109,6 +109,8 @@ class MeasureService:
             dxf_notch_fill_enabled: Annotated[bool, Form(description="是否启用夹钳凹陷修复")],
             dxf_notch_fill_max_width_mm: Annotated[float, Form(description="夹钳凹陷最大宽度mm")],
             dxf_notch_fill_max_depth_mm: Annotated[float, Form(description="夹钳凹陷最大深度mm")],
+            dxf_target_size_1_mm: float | None = None,
+            dxf_target_size_2_mm: float | None = None,
             dxf_target_x_mm: float | None = None,
             dxf_target_y_mm: float | None = None,
     ) -> SimpleNamespace:
@@ -150,6 +152,8 @@ class MeasureService:
             simplify_mm=float(simplify_mm),
             topdown_mm_per_px=float(topdown_mm_per_px),
             topdown_padding_mm=float(topdown_padding_mm),
+            dxf_target_size_1_mm=dxf_target_size_1_mm,
+            dxf_target_size_2_mm=dxf_target_size_2_mm,
             dxf_target_x_mm=dxf_target_x_mm,
             dxf_target_y_mm=dxf_target_y_mm,
             enabled=enabled,

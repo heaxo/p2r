@@ -113,6 +113,10 @@ async def upload_tasks(
     dxf_notch_fill_enabled: Annotated[bool, Form(description="是否启用夹钳凹陷修复")] = False,
     dxf_notch_fill_max_width_mm: Annotated[float, Form(description="夹钳凹陷最大宽度mm")] = 80.0,
     dxf_notch_fill_max_depth_mm: Annotated[float, Form(description="夹钳凹陷最大深度mm")] = 25.0,
+    dxf_target_size_1_mm: Annotated[float | None, Form(description="可选，目标尺寸1，不指定方向，单位mm")] = None,
+    dxf_target_size_2_mm: Annotated[float | None, Form(description="可选，目标尺寸2，不指定方向，单位mm")] = None,
+    dxf_target_x_mm: Annotated[float | None, Form(description="可选，明确指定DXF X方向目标尺寸，单位mm")] = None,
+    dxf_target_y_mm: Annotated[float | None, Form(description="可选，明确指定DXF Y方向目标尺寸，单位mm")] = None,
     per_file_options: Annotated[str | None, Form(description="可选，每个文件的独立参数 JSON 数组")] = None,
 ) -> dict:
     client_id = _require_client_id(x_client_id)
@@ -129,6 +133,16 @@ async def upload_tasks(
         perspective_source=perspective_source,
         paper_rect_mode=paper_rect_mode,
     )
+
+    try:
+        default_target_size_1 = _optional_positive_float(dxf_target_size_1_mm, "目标尺寸1")
+        default_target_size_2 = _optional_positive_float(dxf_target_size_2_mm, "目标尺寸2")
+        default_target_x = _optional_positive_float(dxf_target_x_mm, "目标X尺寸")
+        default_target_y = _optional_positive_float(dxf_target_y_mm, "目标Y尺寸")
+        if (default_target_size_1 is None) != (default_target_size_2 is None):
+            raise ValueError("目标尺寸1和目标尺寸2必须同时填写，或同时留空")
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 
     params = {
         "model_path": model_path,
@@ -152,8 +166,10 @@ async def upload_tasks(
         "dxf_notch_fill_enabled": dxf_notch_fill_enabled,
         "dxf_notch_fill_max_width_mm": dxf_notch_fill_max_width_mm,
         "dxf_notch_fill_max_depth_mm": dxf_notch_fill_max_depth_mm,
-        "dxf_target_x_mm": None,
-        "dxf_target_y_mm": None,
+        "dxf_target_size_1_mm": default_target_size_1,
+        "dxf_target_size_2_mm": default_target_size_2,
+        "dxf_target_x_mm": default_target_x,
+        "dxf_target_y_mm": default_target_y,
     }
 
     file_options: list[dict] = []
@@ -185,10 +201,22 @@ async def upload_tasks(
                 task_params["dxf_notch_fill_max_width_mm"] = float(option.get("dxf_notch_fill_max_width_mm") or 80.0)
             if "dxf_notch_fill_max_depth_mm" in option:
                 task_params["dxf_notch_fill_max_depth_mm"] = float(option.get("dxf_notch_fill_max_depth_mm") or 25.0)
+            if "dxf_target_size_1_mm" in option or "dxf_target_size_2_mm" in option:
+                size_1 = _optional_positive_float(option.get("dxf_target_size_1_mm"), "目标尺寸1")
+                size_2 = _optional_positive_float(option.get("dxf_target_size_2_mm"), "目标尺寸2")
+                if (size_1 is None) != (size_2 is None):
+                    raise ValueError("目标尺寸1和目标尺寸2必须同时填写，或同时留空")
+                if size_1 is not None and size_2 is not None:
+                    task_params["dxf_target_size_1_mm"] = size_1
+                    task_params["dxf_target_size_2_mm"] = size_2
             if "dxf_target_x_mm" in option:
-                task_params["dxf_target_x_mm"] = _optional_positive_float(option.get("dxf_target_x_mm"), "目标X尺寸")
+                target_x = _optional_positive_float(option.get("dxf_target_x_mm"), "目标X尺寸")
+                if target_x is not None:
+                    task_params["dxf_target_x_mm"] = target_x
             if "dxf_target_y_mm" in option:
-                task_params["dxf_target_y_mm"] = _optional_positive_float(option.get("dxf_target_y_mm"), "目标Y尺寸")
+                target_y = _optional_positive_float(option.get("dxf_target_y_mm"), "目标Y尺寸")
+                if target_y is not None:
+                    task_params["dxf_target_y_mm"] = target_y
 
             tasks.append(service.enqueue_task(
                 client_id=client_id,
@@ -310,6 +338,10 @@ async def measure(
         dxf_notch_fill_enabled: Annotated[bool, Form(description="是否启用夹钳凹陷修复")] = True,
         dxf_notch_fill_max_width_mm: Annotated[float, Form(description="夹钳凹陷最大宽度mm")] = 130,
         dxf_notch_fill_max_depth_mm: Annotated[float, Form(description="夹钳凹陷最大深度mm")] = 60,
+        dxf_target_size_1_mm: Annotated[float | None, Form(description="可选，目标尺寸1，不指定方向，单位mm")] = None,
+        dxf_target_size_2_mm: Annotated[float | None, Form(description="可选，目标尺寸2，不指定方向，单位mm")] = None,
+        dxf_target_x_mm: Annotated[float | None, Form(description="可选，明确指定DXF X方向目标尺寸，单位mm")] = None,
+        dxf_target_y_mm: Annotated[float | None, Form(description="可选，明确指定DXF Y方向目标尺寸，单位mm")] = None,
 ) -> MeasureResponse:
     """Measure one uploaded image and return generated file paths."""
 
@@ -344,6 +376,16 @@ async def measure(
     )
 
     try:
+        measure_target_size_1 = _optional_positive_float(dxf_target_size_1_mm, "目标尺寸1")
+        measure_target_size_2 = _optional_positive_float(dxf_target_size_2_mm, "目标尺寸2")
+        measure_target_x = _optional_positive_float(dxf_target_x_mm, "目标X尺寸")
+        measure_target_y = _optional_positive_float(dxf_target_y_mm, "目标Y尺寸")
+        if (measure_target_size_1 is None) != (measure_target_size_2 is None):
+            raise ValueError("目标尺寸1和目标尺寸2必须同时填写，或同时留空")
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+    try:
         image_path = await service.save_upload(image)
         logger.info("Upload saved: filename={}, path={}", original_filename, image_path)
         args = await run_in_threadpool(
@@ -370,6 +412,10 @@ async def measure(
             dxf_notch_fill_enabled=dxf_notch_fill_enabled,
             dxf_notch_fill_max_width_mm=dxf_notch_fill_max_width_mm,
             dxf_notch_fill_max_depth_mm=dxf_notch_fill_max_depth_mm,
+            dxf_target_size_1_mm=measure_target_size_1,
+            dxf_target_size_2_mm=measure_target_size_2,
+            dxf_target_x_mm=measure_target_x,
+            dxf_target_y_mm=measure_target_y,
         )
         result = await run_in_threadpool(service.measure, args)
         elapsed = time.perf_counter() - started
