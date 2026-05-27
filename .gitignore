@@ -19,5 +19,5 @@ node_modules/
 desktop-dist/
 dist/
 build/
-logs_packaged_verify5*/
+logs_packaged_verify*/
 measure_out_packaged_verify*/
