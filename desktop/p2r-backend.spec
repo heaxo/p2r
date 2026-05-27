@@ -2,13 +2,13 @@
 
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 project_root = Path.cwd()
 
 datas = [
     (str(project_root / "frontend"), "frontend"),
-]
+] + collect_data_files("osam")
 
 model_path = project_root / "best2.pt"
 if model_path.exists():

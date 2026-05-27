@@ -729,7 +729,8 @@ def _import_osam():
         import osam.types  # type: ignore
         return osam.apis, osam.types
     except Exception as e:
-        raise RuntimeError("未找到识别运行环境。请先安装并配置服务环境。") from e
+        logger.exception("Failed to import osam runtime")
+        raise RuntimeError(f"未找到识别运行环境。请先安装并配置服务环境。原始错误：{type(e).__name__}: {e}") from e
 
 
 def _sam_annotation_to_full_mask(annotation, h: int, w: int) -> Optional[np.ndarray]:
