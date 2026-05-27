@@ -39,6 +39,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--topdown-mm-per-px", type=float, default=2.0, help="俯视矫正图比例，默认 1px=2mm")
     parser.add_argument("--topdown-padding-mm", type=float, default=50.0, help="俯视矫正图四周留白，单位mm")
+    parser.add_argument("--dxf-target-x-mm", type=float, default=None, help="可选，按 DXF X 方向目标尺寸缩放输出，单位 mm")
+    parser.add_argument("--dxf-target-y-mm", type=float, default=None, help="可选，按 DXF Y 方向目标尺寸缩放输出，单位 mm")
     return parser
 
 

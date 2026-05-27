@@ -63,7 +63,7 @@
 
     .grid {
       display: grid;
-      grid-template-columns: 300px minmax(0, 1fr);
+      grid-template-columns: 340px minmax(0, 1fr);
       gap: 10px;
       align-items: start;
     }
@@ -185,7 +185,7 @@
       margin-top: 8px;
       border: 1px solid var(--border);
       border-radius: 8px;
-      max-height: 360px;
+      max-height: 460px;
       overflow: auto;
       background: #fff;
     }
@@ -247,6 +247,31 @@
       height: 28px;
       padding: 4px 6px;
       font-size: 12px;
+    }
+
+    .selected-size-values {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      padding: 7px;
+      border: 1px solid #edf1f5;
+      border-radius: 6px;
+      background: #f8fafc;
+    }
+
+    .selected-options .selected-number-field {
+      display: grid;
+      grid-template-columns: 1fr;
+      align-items: stretch;
+      gap: 4px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .selected-options .selected-number-field input {
+      background: #fff;
+      color: var(--text);
     }
 
     .selected-notch-values {
@@ -638,6 +663,7 @@
 
       .actions,
       .notch-options,
+      .selected-size-values,
       .metric-grid {
         grid-template-columns: 1fr;
       }
@@ -669,7 +695,7 @@
             <div class="selected-files empty" id="selectedFiles">尚未选择文件</div>
 
             <div class="field-note">
-              每张图片可单独设置透视矫正和小凹陷修复。未勾选“钢板透视”时默认使用 A4 四角。
+              每张图片可单独设置透视矫正、小凹陷修复和目标 X/Y 尺寸；目标尺寸留空时按识别结果生成。
             </div>
 
             <div class="actions">
@@ -824,7 +850,9 @@
         usePlatePerspective: false,
         enableNotchRepair: false,
         notchWidth: 80,
-        notchDepth: 25
+        notchDepth: 25,
+        targetX: '',
+        targetY: ''
       }));
     }
 
@@ -851,6 +879,16 @@
                 <input type="checkbox" data-file-option="enableNotchRepair" ${item.enableNotchRepair ? 'checked' : ''}>
                 <span>小凹修复</span>
               </label>
+              <div class="selected-size-values">
+                <label class="selected-number-field">
+                  <span>目标 X(mm)</span>
+                  <input type="number" min="1" step="1" value="${escapeHtml(item.targetX)}" placeholder="自动" data-file-option="targetX">
+                </label>
+                <label class="selected-number-field">
+                  <span>目标 Y(mm)</span>
+                  <input type="number" min="1" step="1" value="${escapeHtml(item.targetY)}" placeholder="自动" data-file-option="targetY">
+                </label>
+              </div>
               ${item.enableNotchRepair ? `
                 <div class="selected-notch-values">
                   <input type="number" min="30" max="600" step="10" value="${escapeHtml(item.notchWidth)}" data-file-option="notchWidth" title="最大宽度 mm">
@@ -861,6 +899,16 @@
           </div>
         </div>
       `).join('');
+    }
+
+    function optionalPositiveNumber(value, label) {
+      const text = String(value ?? '').trim();
+      if (!text) return null;
+      const number = Number(text);
+      if (!Number.isFinite(number) || number <= 0) {
+        throw new Error(`${label}必须大于 0`);
+      }
+      return number;
     }
 
     function buildFormData() {
@@ -891,7 +939,9 @@
         use_plate_perspective: Boolean(item.usePlatePerspective),
         dxf_notch_fill_enabled: Boolean(item.enableNotchRepair),
         dxf_notch_fill_max_width_mm: Number(item.notchWidth || 80),
-        dxf_notch_fill_max_depth_mm: Number(item.notchDepth || 25)
+        dxf_notch_fill_max_depth_mm: Number(item.notchDepth || 25),
+        dxf_target_x_mm: optionalPositiveNumber(item.targetX, `${item.file.name} 目标X尺寸`),
+        dxf_target_y_mm: optionalPositiveNumber(item.targetY, `${item.file.name} 目标Y尺寸`)
       }))));
 
       return fd;
@@ -1022,10 +1072,13 @@
       if (!dims || Object.keys(dims).length === 0) return '-';
       const length = dims.length_mm ?? dims.max_length_mm;
       const width = dims.width_mm ?? dims.max_width_mm;
+      const xSize = dims.axis_bbox_width_mm;
+      const ySize = dims.axis_bbox_height_mm;
       const area = dims.area_m2;
       return `
         <div class="metric-line">长：${escapeHtml(valueWithUnit(length, 'mm'))}</div>
         <div class="metric-line">宽：${escapeHtml(valueWithUnit(width, 'mm'))}</div>
+        <div class="metric-line">X/Y：${escapeHtml(valueWithUnit(xSize, 'mm'))} / ${escapeHtml(valueWithUnit(ySize, 'mm'))}</div>
         <div class="metric-line">面积：${escapeHtml(valueWithUnit(area, 'm²'))}</div>
       `;
     }
@@ -1047,7 +1100,12 @@
       const params = task.params || {};
       const perspective = params.perspective_source === 'plate' ? '钢板透视' : 'A4透视';
       const notch = params.dxf_notch_fill_enabled ? '小凹修复' : '无修复';
-      return `${perspective} · ${notch}`;
+      const targetX = params.dxf_target_x_mm;
+      const targetY = params.dxf_target_y_mm;
+      const targetText = (targetX || targetY)
+        ? ` · 目标X/Y ${targetX || '自动'}/${targetY || '自动'}mm`
+        : '';
+      return `${perspective} · ${notch}${targetText}`;
     }
 
     function renderTaskDxfThumb(task) {
@@ -1199,8 +1257,8 @@
         <div class="metric-grid">
           ${metric('最大长度', dims.length_mm, ' mm')}
           ${metric('最大宽度', dims.width_mm, ' mm')}
-          ${metric('最小长度', dims.min_length_mm, ' mm')}
-          ${metric('最小宽度', dims.min_width_mm, ' mm')}
+          ${metric('X尺寸', dims.axis_bbox_width_mm, ' mm')}
+          ${metric('Y尺寸', dims.axis_bbox_height_mm, ' mm')}
           ${metric('面积', dims.area_m2, ' m²')}
           ${metric('周长', dims.perimeter_mm, ' mm')}
         </div>
@@ -1277,11 +1335,30 @@
         item.notchWidth = Number(target.value || 80);
       } else if (option === 'notchDepth') {
         item.notchDepth = Number(target.value || 25);
+      } else if (option === 'targetX') {
+        item.targetX = target.value;
+      } else if (option === 'targetY') {
+        item.targetY = target.value;
       }
 
       if (option === 'enableNotchRepair') {
         renderSelectedFiles();
       }
+    });
+
+    selectedFilesBox.addEventListener('input', event => {
+      const target = event.target;
+      const option = target && target.dataset ? target.dataset.fileOption : '';
+      if (option !== 'targetX' && option !== 'targetY' && option !== 'notchWidth' && option !== 'notchDepth') return;
+
+      const row = target.closest('[data-file-id]');
+      const item = row ? selectedFiles.find(file => file.id === row.dataset.fileId) : null;
+      if (!item) return;
+
+      if (option === 'targetX') item.targetX = target.value;
+      if (option === 'targetY') item.targetY = target.value;
+      if (option === 'notchWidth') item.notchWidth = Number(target.value || 80);
+      if (option === 'notchDepth') item.notchDepth = Number(target.value || 25);
     });
 
     uploadForm.addEventListener('submit', async event => {

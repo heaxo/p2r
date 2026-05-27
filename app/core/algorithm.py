@@ -1829,6 +1829,69 @@ def calc_dimensions(contour_mm: np.ndarray) -> dict:
     }
 
 
+def optional_positive_mm(value: Any, field_name: str) -> Optional[float]:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return None
+
+    number = float(value)
+    if not math.isfinite(number) or number <= 0:
+        raise ValueError(f"{field_name} 必须是大于 0 的毫米数")
+    return number
+
+
+def scale_contour_to_target_xy(
+    contour_mm: np.ndarray,
+    target_x_mm: Optional[float],
+    target_y_mm: Optional[float],
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    pts = np.asarray(contour_mm, dtype=np.float32).reshape(-1, 2)
+    target_x = optional_positive_mm(target_x_mm, "dxf_target_x_mm")
+    target_y = optional_positive_mm(target_y_mm, "dxf_target_y_mm")
+
+    min_xy = np.min(pts, axis=0).astype(np.float64)
+    max_xy = np.max(pts, axis=0).astype(np.float64)
+    current_x = float(max_xy[0] - min_xy[0])
+    current_y = float(max_xy[1] - min_xy[1])
+
+    info: Dict[str, Any] = {
+        "enabled": bool(target_x is not None or target_y is not None),
+        "mode": "axis_bbox_xy",
+        "target_x_mm": round(float(target_x), 3) if target_x is not None else None,
+        "target_y_mm": round(float(target_y), 3) if target_y is not None else None,
+        "source_x_mm": round(current_x, 3),
+        "source_y_mm": round(current_y, 3),
+        "scale_x": 1.0,
+        "scale_y": 1.0,
+    }
+
+    if not info["enabled"]:
+        info["reason"] = "no_target_size"
+        return pts.copy(), info
+
+    if target_x is not None and current_x <= 1e-6:
+        raise ValueError("当前轮廓 X 方向尺寸过小，无法按目标 X 缩放")
+    if target_y is not None and current_y <= 1e-6:
+        raise ValueError("当前轮廓 Y 方向尺寸过小，无法按目标 Y 缩放")
+
+    scale_x = float(target_x / current_x) if target_x is not None else 1.0
+    scale_y = float(target_y / current_y) if target_y is not None else 1.0
+    scaled = pts.astype(np.float64).copy()
+    scaled[:, 0] = min_xy[0] + (scaled[:, 0] - min_xy[0]) * scale_x
+    scaled[:, 1] = min_xy[1] + (scaled[:, 1] - min_xy[1]) * scale_y
+
+    info.update({
+        "scale_x": round(scale_x, 9),
+        "scale_y": round(scale_y, 9),
+        "output_x_mm": round(float(np.max(scaled[:, 0]) - np.min(scaled[:, 0])), 3),
+        "output_y_mm": round(float(np.max(scaled[:, 1]) - np.min(scaled[:, 1])), 3),
+    })
+    return scaled.astype(np.float32), info
+
+
 def write_simple_dxf(path: Path, plate_contour_mm: np.ndarray, offset_to_positive: bool = True) -> Dict[str, Any]:
     """
     写 DXF，单位 mm。
@@ -2391,6 +2454,8 @@ def process_one_image(args) -> Dict[str, Any]:
         logger.info("A4-based perspective homography selected")
 
     plate_contour_mm_raw = transform_points_px_to_mm(plate_contour_px, H)
+    dxf_target_x_mm = getattr(args, "dxf_target_x_mm", None)
+    dxf_target_y_mm = getattr(args, "dxf_target_y_mm", None)
 
     # 先用原始mm轮廓判断是否接近圆形。
     # 注意：圆形检测必须放在 simplify_contour_mm 和 DXF后处理之前。
@@ -2398,6 +2463,8 @@ def process_one_image(args) -> Dict[str, Any]:
 
     dxf_path = run_dir / "plate_outer.dxf"
     dxf_geometry_info: Dict[str, Any] = {}
+    dxf_target_size_info: Dict[str, Any] = {}
+    detected_plate_dimensions: Dict[str, Any] = {}
 
     if circle_info["is_circle_like"]:
         logger.info(
@@ -2405,13 +2472,6 @@ def process_one_image(args) -> Dict[str, Any]:
             float(circle_info["diameter"]),
             float(circle_info["circularity"]),
         )
-        # 圆形钢板直接写 DXF CIRCLE，不走折线和后处理。
-        dxf_geometry_info = write_circle_dxf(
-            dxf_path,
-            circle_info,
-            offset_to_positive=True,
-        )
-
         # 预览图和尺寸计算仍然需要一个轮廓，这里生成一个圆形轮廓用于预览。
         plate_contour_mm = make_circle_preview_contour_mm(circle_info)
 
@@ -2420,7 +2480,7 @@ def process_one_image(args) -> Dict[str, Any]:
         area_mm2 = float(np.pi * radius * radius)
         perimeter_mm = float(2.0 * np.pi * radius)
 
-        dims = {
+        detected_plate_dimensions = {
             "length_mm": round(diameter, 2),
             "width_mm": round(diameter, 2),
             "max_length_mm": round(diameter, 2),
@@ -2446,9 +2506,38 @@ def process_one_image(args) -> Dict[str, Any]:
             "circle_radius_error_ratio": round(float(circle_info["radius_error_ratio"]), 4),
         }
 
+        plate_contour_mm, dxf_target_size_info = scale_contour_to_target_xy(
+            plate_contour_mm,
+            dxf_target_x_mm,
+            dxf_target_y_mm,
+        )
+
+        if dxf_target_size_info.get("enabled"):
+            dims = calc_dimensions(plate_contour_mm)
+            dims["source_circle_mode"] = True
+            dims["dxf_target_size"] = dxf_target_size_info
+            dxf_geometry_info = write_simple_dxf(
+                dxf_path,
+                plate_contour_mm,
+                offset_to_positive=True,
+            )
+        else:
+            dims = dict(detected_plate_dimensions)
+            dims["dxf_target_size"] = dxf_target_size_info
+            # 圆形钢板直接写 DXF CIRCLE，不走折线和后处理。
+            dxf_geometry_info = write_circle_dxf(
+                dxf_path,
+                circle_info,
+                offset_to_positive=True,
+            )
+
         dxf_postprocess_info = {
             "enabled": False,
-            "reason": "circle_like_contour_use_dxf_circle",
+            "reason": (
+                "circle_like_contour_scaled_to_target_xy"
+                if dxf_target_size_info.get("enabled")
+                else "circle_like_contour_use_dxf_circle"
+            ),
             "circle_info": json_safe(circle_info),
         }
 
@@ -2498,7 +2587,14 @@ def process_one_image(args) -> Dict[str, Any]:
         )
         mask_paths["debug_dxf_postprocess_preview"] = str(dxf_postprocess_preview_path)
 
+        detected_plate_dimensions = calc_dimensions(plate_contour_mm)
+        plate_contour_mm, dxf_target_size_info = scale_contour_to_target_xy(
+            plate_contour_mm,
+            dxf_target_x_mm,
+            dxf_target_y_mm,
+        )
         dims = calc_dimensions(plate_contour_mm)
+        dims["dxf_target_size"] = dxf_target_size_info
 
         dxf_geometry_info = write_simple_dxf(
             dxf_path,
@@ -2602,9 +2698,11 @@ def process_one_image(args) -> Dict[str, Any]:
         # 新增：DXF后处理信息
         "dxf_postprocess": dxf_postprocess_info,
         "dxf_geometry": dxf_geometry_info,
+        "dxf_target_size": dxf_target_size_info,
 
         # 尺寸基于后处理后的轮廓
         "plate_dimensions": dims,
+        "detected_plate_dimensions": detected_plate_dimensions,
 
         "paths": {
             "dxf": str(dxf_path),

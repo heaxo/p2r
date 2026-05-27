@@ -109,6 +109,8 @@ class MeasureService:
             dxf_notch_fill_enabled: Annotated[bool, Form(description="是否启用夹钳凹陷修复")],
             dxf_notch_fill_max_width_mm: Annotated[float, Form(description="夹钳凹陷最大宽度mm")],
             dxf_notch_fill_max_depth_mm: Annotated[float, Form(description="夹钳凹陷最大深度mm")],
+            dxf_target_x_mm: float | None = None,
+            dxf_target_y_mm: float | None = None,
     ) -> SimpleNamespace:
         """Create an args object compatible with process_one_image(args)."""
 
@@ -148,6 +150,8 @@ class MeasureService:
             simplify_mm=float(simplify_mm),
             topdown_mm_per_px=float(topdown_mm_per_px),
             topdown_padding_mm=float(topdown_padding_mm),
+            dxf_target_x_mm=dxf_target_x_mm,
+            dxf_target_y_mm=dxf_target_y_mm,
             enabled=enabled,
             dxf_postprocess_enabled=enabled,
             dxf_notch_fill_enabled=dxf_notch_fill_enabled,
@@ -202,6 +206,8 @@ class MeasureService:
             "fill_paper_to_plate": result.get("fill_paper_to_plate", {}),
             "dxf_postprocess": result.get("dxf_postprocess", {}),
             "dxf_geometry": result.get("dxf_geometry", {}),
+            "dxf_target_size": result.get("dxf_target_size", {}),
+            "detected_plate_dimensions": result.get("detected_plate_dimensions", {}),
             "result_json": paths.get("result_json"),
         }
 
@@ -345,6 +351,8 @@ class MeasureService:
             "paths": paths,
             "params": params,
             "plate_dimensions": (result or {}).get("plate_dimensions", {}),
+            "dxf_target_size": (result or {}).get("dxf_target_size", {}),
+            "detected_plate_dimensions": (result or {}).get("detected_plate_dimensions", {}),
             "dxf_geometry": (result or {}).get("dxf_geometry", {}),
             "dxf_postprocess": (result or {}).get("dxf_postprocess", {}),
             "result": result,

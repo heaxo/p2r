@@ -13,6 +13,8 @@ class MeasureResponse(BaseModel):
     paths: Dict[str, str]
     urls: Dict[str, str] = Field(default_factory=dict)
     plate_dimensions: Dict[str, Any]
+    detected_plate_dimensions: Dict[str, Any] = Field(default_factory=dict)
+    dxf_target_size: Dict[str, Any] = Field(default_factory=dict)
     a4: Dict[str, Any]
     topdown: Dict[str, Any]
     input: Dict[str, Any]

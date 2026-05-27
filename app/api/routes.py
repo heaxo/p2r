@@ -6,6 +6,7 @@ import re
 import json
 import io
 import zipfile
+import math
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated
@@ -44,6 +45,24 @@ def _require_client_id(value: str | None) -> str:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="客户端标识格式不正确")
 
     return client_id
+
+
+def _optional_positive_float(value: object, field_name: str) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return None
+
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} 必须是大于 0 的数字") from exc
+
+    if not math.isfinite(number) or number <= 0:
+        raise ValueError(f"{field_name} 必须是大于 0 的数字")
+    return number
 
 
 def _validate_measure_options(
@@ -133,6 +152,8 @@ async def upload_tasks(
         "dxf_notch_fill_enabled": dxf_notch_fill_enabled,
         "dxf_notch_fill_max_width_mm": dxf_notch_fill_max_width_mm,
         "dxf_notch_fill_max_depth_mm": dxf_notch_fill_max_depth_mm,
+        "dxf_target_x_mm": None,
+        "dxf_target_y_mm": None,
     }
 
     file_options: list[dict] = []
@@ -164,6 +185,10 @@ async def upload_tasks(
                 task_params["dxf_notch_fill_max_width_mm"] = float(option.get("dxf_notch_fill_max_width_mm") or 80.0)
             if "dxf_notch_fill_max_depth_mm" in option:
                 task_params["dxf_notch_fill_max_depth_mm"] = float(option.get("dxf_notch_fill_max_depth_mm") or 25.0)
+            if "dxf_target_x_mm" in option:
+                task_params["dxf_target_x_mm"] = _optional_positive_float(option.get("dxf_target_x_mm"), "目标X尺寸")
+            if "dxf_target_y_mm" in option:
+                task_params["dxf_target_y_mm"] = _optional_positive_float(option.get("dxf_target_y_mm"), "目标Y尺寸")
 
             tasks.append(service.enqueue_task(
                 client_id=client_id,
