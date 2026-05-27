@@ -929,6 +929,7 @@ def run_sam2_by_candidate_points(image_rgb: np.ndarray, candidate_points: Sequen
                     return mask, item
 
     if best is None or best["sam_score"] < -100:
+        logger.error("SAM2 candidate attempts failed: target={}, tried={}", target_class_name, tried)
         raise RuntimeError("多个候选点尝试后仍然没有得到合理 mask")
     best["tried"] = tried
     return best["mask"], best

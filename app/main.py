@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -67,7 +68,7 @@ app.mount(settings.static_url_prefix, StaticFiles(directory=str(settings.output_
 logger.info("Mounted output files: url_prefix={}, directory={}", settings.static_url_prefix, settings.output_root)
 
 # 前端页面。用户页访问 /ui/，调试参数页访问 /ui/debug.html。
-frontend_dir = Path(__file__).resolve().parent.parent / "frontend"
+frontend_dir = Path(os.getenv("FRONTEND_DIR", Path(__file__).resolve().parent.parent / "frontend"))
 if frontend_dir.exists():
     app.mount("/ui", StaticFiles(directory=str(frontend_dir), html=True), name="ui")
     logger.info("Mounted frontend UI: directory={}", frontend_dir)

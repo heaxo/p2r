@@ -1,0 +1,43 @@
+{
+  "name": "p2r-desktop",
+  "version": "1.2.0",
+  "description": "Plate Measure desktop app",
+  "author": "p2r",
+  "license": "SEE LICENSE IN LICENSE",
+  "main": "desktop/main.js",
+  "private": true,
+  "scripts": {
+    "desktop:dev": "electron .",
+    "desktop:pack": "npm run backend:build && electron-builder --win nsis",
+    "backend:build": ".venv\\Scripts\\python -m PyInstaller desktop/p2r-backend.spec --noconfirm"
+  },
+  "build": {
+    "appId": "com.p2r.desktop",
+    "productName": "Plate Measure",
+    "directories": {
+      "output": "desktop-dist"
+    },
+    "files": [
+      "desktop/main.js",
+      "desktop/preload.js",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "dist/p2r-backend",
+        "to": "backend"
+      }
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  },
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3"
+  }
+}

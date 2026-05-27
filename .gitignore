@@ -15,3 +15,7 @@ test/measure_out
 logs
 data/*.sqlite3
 data/*.sqlite3-*
+node_modules/
+desktop-dist/
+dist/
+build/
