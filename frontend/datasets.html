@@ -679,6 +679,15 @@
                   <option value="training">训练集识别</option>
                 </select>
               </div>
+              <div class="col-12 col-md-4">
+                <label for="a4Orientation" class="form-label">A4纸毫米方向</label>
+                <select id="a4Orientation" class="form-select">
+                  <option value="auto">自动判断</option>
+                  <option value="landscape">x轴边297mm，y轴边210mm</option>
+                  <option value="portrait">x轴边210mm，y轴边297mm</option>
+                </select>
+                <div class="form-text">当拍摄角度导致A4方向自动判断错误时，手动指定A4纸对应到DXF坐标轴的毫米方向。</div>
+              </div>
               <div class="col-6 col-md-2">
                 <label for="notchWidth" class="form-label">夹钳宽度 mm</label>
                 <input id="notchWidth" class="form-control" type="number" step="0.001" min="0" value="200" />
@@ -711,7 +720,7 @@
 
   <script>
     const AUTH_TOKEN = 'tk_c2VjcmV0LXJhbmRvbS10b2tlbi0xMjM0NTY3OA';
-    const DATASET_SAM_MODEL = 'sam2:small';
+    const DATASET_SAM_MODEL = 'sam2';
     const state = {
       datasets: [],
       selectedId: null,
@@ -769,6 +778,7 @@
       targetX: document.getElementById('targetX'),
       targetY: document.getElementById('targetY'),
       paperSource: document.getElementById('paperSource'),
+      a4Orientation: document.getElementById('a4Orientation'),
       usePlatePerspective: document.getElementById('usePlatePerspective'),
       notchEnabled: document.getElementById('notchEnabled'),
       notchWidth: document.getElementById('notchWidth'),
@@ -856,6 +866,12 @@
 
     function paperSourceLabel(value) {
       return value === 'sam2' ? '标准识别' : '训练集识别';
+    }
+
+    function a4OrientationLabel(value) {
+      if (value === 'landscape') return 'x轴边297mm，y轴边210mm';
+      if (value === 'portrait') return 'x轴边210mm，y轴边297mm';
+      return '自动判断';
     }
 
     async function request(path, options = {}) {
@@ -1006,6 +1022,7 @@
           </td>
           <td>
             <div>A4纸识别：${paperSourceLabel(item.paper_source)}</div>
+            <div>A4纸方向：${a4OrientationLabel(item.a4_orientation)}</div>
             <div>钢板透视：${item.use_plate_perspective ? '是' : '否'}</div>
             <div>夹钳修复：${item.dxf_notch_fill_enabled ? '是' : '否'}</div>
             <div class="small-muted">${formatNumber(item.dxf_notch_fill_max_width_mm)} x ${formatNumber(item.dxf_notch_fill_max_depth_mm)} mm</div>
@@ -1107,6 +1124,7 @@
       els.targetX.value = item && item.dxf_target_x_mm != null ? item.dxf_target_x_mm : '';
       els.targetY.value = item && item.dxf_target_y_mm != null ? item.dxf_target_y_mm : '';
       els.paperSource.value = !item || item.paper_source === 'sam2' ? 'standard' : 'training';
+      els.a4Orientation.value = item && item.a4_orientation ? item.a4_orientation : 'auto';
       els.usePlatePerspective.checked = !!(item && item.use_plate_perspective);
       els.notchEnabled.checked = !!(item && item.dxf_notch_fill_enabled);
       els.notchWidth.value = item && item.dxf_notch_fill_max_width_mm != null ? item.dxf_notch_fill_max_width_mm : 200;
@@ -1136,6 +1154,7 @@
       appendValue(form, 'dxf_target_x_mm', els.targetX.value);
       appendValue(form, 'dxf_target_y_mm', els.targetY.value);
       appendValue(form, 'paper_source', els.paperSource.value || 'standard');
+      appendValue(form, 'a4_orientation', els.a4Orientation.value || 'auto');
       form.append('use_plate_perspective', els.usePlatePerspective.checked ? 'true' : 'false');
       form.append('dxf_notch_fill_enabled', els.notchEnabled.checked ? 'true' : 'false');
       appendValue(form, 'dxf_notch_fill_max_width_mm', els.notchWidth.value || '200');

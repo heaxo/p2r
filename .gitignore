@@ -19,6 +19,7 @@ node_modules/
 desktop-dist/
 desktop-dist-fixed/
 dist/
+data/
 build/
 logs_packaged_verify*/
 measure_out_packaged_verify*/

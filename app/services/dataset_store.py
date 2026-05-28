@@ -64,6 +64,7 @@ class DatasetStore:
                     dxf_target_x_mm REAL,
                     dxf_target_y_mm REAL,
                     paper_source TEXT NOT NULL DEFAULT 'yolo',
+                    a4_orientation TEXT NOT NULL DEFAULT 'auto',
                     use_plate_perspective INTEGER NOT NULL DEFAULT 0,
                     dxf_notch_fill_enabled INTEGER NOT NULL DEFAULT 0,
                     dxf_notch_fill_max_width_mm REAL NOT NULL DEFAULT 80.0,
@@ -92,6 +93,8 @@ class DatasetStore:
                 conn.execute("ALTER TABLE dataset_items ADD COLUMN quantity INTEGER")
             if "paper_source" not in item_columns:
                 conn.execute("ALTER TABLE dataset_items ADD COLUMN paper_source TEXT NOT NULL DEFAULT 'yolo'")
+            if "a4_orientation" not in item_columns:
+                conn.execute("ALTER TABLE dataset_items ADD COLUMN a4_orientation TEXT NOT NULL DEFAULT 'auto'")
 
     def mark_interrupted_work_failed(self) -> None:
         now = utc_now()
@@ -227,6 +230,7 @@ class DatasetStore:
             "dxf_target_x_mm": fields.get("dxf_target_x_mm"),
             "dxf_target_y_mm": fields.get("dxf_target_y_mm"),
             "paper_source": fields.get("paper_source") or "yolo",
+            "a4_orientation": fields.get("a4_orientation") or "auto",
             "use_plate_perspective": 1 if fields.get("use_plate_perspective") else 0,
             "dxf_notch_fill_enabled": 1 if fields.get("dxf_notch_fill_enabled") else 0,
             "dxf_notch_fill_max_width_mm": float(fields.get("dxf_notch_fill_max_width_mm") or 80.0),
@@ -284,6 +288,7 @@ class DatasetStore:
             "dxf_target_x_mm",
             "dxf_target_y_mm",
             "paper_source",
+            "a4_orientation",
             "use_plate_perspective",
             "dxf_notch_fill_enabled",
             "dxf_notch_fill_max_width_mm",

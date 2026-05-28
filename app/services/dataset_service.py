@@ -219,6 +219,7 @@ class DatasetService:
                 dxf_target_x_mm=item.get("dxf_target_x_mm"),
                 dxf_target_y_mm=item.get("dxf_target_y_mm"),
                 paper_source=item.get("paper_source") or "yolo",
+                a4_orientation=item.get("a4_orientation") or "auto",
                 use_plate_perspective=bool(item.get("use_plate_perspective")),
                 dxf_notch_fill_enabled=bool(item.get("dxf_notch_fill_enabled")),
                 dxf_notch_fill_max_width_mm=item.get("dxf_notch_fill_max_width_mm"),
@@ -279,7 +280,7 @@ class DatasetService:
                     user_point_ratio=None,
                     paper_source=self._normalize_paper_source(item.get("paper_source")),
                     paper_sam2_yolo_fallback=False,
-                    a4_orientation="auto",
+                    a4_orientation=self._normalize_a4_orientation(item.get("a4_orientation")),
                     perspective_source="plate" if bool(item.get("use_plate_perspective")) else "a4",
                     paper_points=None,
                     paper_rect_mode="approx_poly",
@@ -392,6 +393,7 @@ class DatasetService:
             ("尺寸2", "可选。不指定方向；尺寸1和尺寸2必须同时填写。"),
             ("x", "可选，单位 mm。明确指定 DXF X 方向目标尺寸。为空时优先使用尺寸1/尺寸2。"),
             ("y", "可选，单位 mm。明确指定 DXF Y 方向目标尺寸。为空时优先使用尺寸1/尺寸2。"),
+            ("A4纸方向", "可选，默认 auto。用于指定A4纸在矫正后对应的毫米方向：auto 自动判断；x轴边297mm y轴边210mm；x轴边210mm y轴边297mm。拍摄角度导致系统判断错误时填写。"),
             ("是否启用钢板透视", "填写 是/否、true/false 或 1/0。启用后以钢板轮廓做透视矫正。"),
             ("是否启用夹钳修复", "填写 是/否、true/false 或 1/0。启用后修复夹钳造成的边缘凹陷。"),
             ("夹钳修复最大宽度mm", "可选，默认 80。夹钳凹陷最大宽度，单位 mm。"),
@@ -406,7 +408,14 @@ class DatasetService:
 
         bool_validation = DataValidation(type="list", formula1='"是,否"', allow_blank=True)
         sheet.add_data_validation(bool_validation)
-        bool_validation.add("J2:K2000")
+        orientation_validation = DataValidation(
+            type="list",
+            formula1='"auto,x轴边297mm y轴边210mm,x轴边210mm y轴边297mm"',
+            allow_blank=True,
+        )
+        sheet.add_data_validation(orientation_validation)
+        orientation_validation.add("J2:J2000")
+        bool_validation.add("K2:L2000")
         sheet.freeze_panes = "A2"
 
         buffer = io.BytesIO()
@@ -715,6 +724,7 @@ class DatasetService:
             "dxf_target_x_mm": self._optional_positive_float(fields.get("dxf_target_x_mm"), "x"),
             "dxf_target_y_mm": self._optional_positive_float(fields.get("dxf_target_y_mm"), "y"),
             "paper_source": self._normalize_paper_source(fields.get("paper_source")),
+            "a4_orientation": self._normalize_a4_orientation(fields.get("a4_orientation")),
             "use_plate_perspective": self._parse_bool(fields.get("use_plate_perspective")),
             "dxf_notch_fill_enabled": self._parse_bool(fields.get("dxf_notch_fill_enabled")),
             "dxf_notch_fill_max_width_mm": self._optional_positive_float(
@@ -780,6 +790,7 @@ class DatasetService:
             "dxf_target_x_mm": row.get("dxf_target_x_mm"),
             "dxf_target_y_mm": row.get("dxf_target_y_mm"),
             "paper_source": self._normalize_paper_source(row.get("paper_source")),
+            "a4_orientation": self._normalize_a4_orientation(row.get("a4_orientation")),
             "use_plate_perspective": bool(row.get("use_plate_perspective")),
             "dxf_notch_fill_enabled": bool(row.get("dxf_notch_fill_enabled")),
             "dxf_notch_fill_max_width_mm": row.get("dxf_notch_fill_max_width_mm"),
@@ -820,6 +831,10 @@ class DatasetService:
             "尺寸2": "dxf_target_size_2_mm",
             "x": "dxf_target_x_mm",
             "y": "dxf_target_y_mm",
+            "a4纸方向": "a4_orientation",
+            "a4方向": "a4_orientation",
+            "纸张方向": "a4_orientation",
+            "纸张毫米方向": "a4_orientation",
             "是否启用钢板透视": "use_plate_perspective",
             "钢板透视": "use_plate_perspective",
             "是否启用夹钳修复": "dxf_notch_fill_enabled",
@@ -993,6 +1008,40 @@ class DatasetService:
         if text in {"sam2", "standard", "std"}:
             return "sam2"
         raise ValueError("A4纸来源参数不正确")
+
+    def _normalize_a4_orientation(self, value: Any) -> str:
+        text = self._as_text(value).lower()
+        if not text:
+            return "auto"
+        compact = text.replace(" ", "").replace("_", "").replace("-", "")
+        if compact in {"auto", "自动", "自动判断", "自动识别"}:
+            return "auto"
+        if compact in {
+            "landscape",
+            "横向",
+            "横版",
+            "x297y210",
+            "x轴边297mmy轴边210mm",
+            "x边297mmy边210mm",
+            "宽297高210",
+            "297x210",
+            "297*210",
+        }:
+            return "landscape"
+        if compact in {
+            "portrait",
+            "纵向",
+            "竖向",
+            "竖版",
+            "x210y297",
+            "x轴边210mmy轴边297mm",
+            "x边210mmy边297mm",
+            "宽210高297",
+            "210x297",
+            "210*297",
+        }:
+            return "portrait"
+        raise ValueError("A4纸方向参数不正确，请填写 auto、x轴边297mm y轴边210mm 或 x轴边210mm y轴边297mm")
 
     def _optional_positive_float(self, value: Any, field_name: str, default: float | None = None) -> float | None:
         if value is None:
