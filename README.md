@@ -9,6 +9,7 @@
 - Excel 导入：下载 Excel 模板后批量填写数据，再上传创建数据集。
 - 历史记录：数据集和数据项保存到 SQLite，可查看历史识别状态、结果链接和 DXF。
 - 数据集复制：复制已有数据集，复制后的状态为未识别。
+- 导入至 Expert：数据集可选择 `Procesos` 或 `Masterlink` 导入器，并生成对应的 `.LST/.prc` 或 XML 后调用 Lantek 导入程序。
 - 桌面菜单：Electron 菜单栏提供“数据集”和“批量识别”两个入口，桌面版默认进入数据集页面。
 
 ## 目录结构
@@ -21,6 +22,7 @@ app/
   services/task_store.py         批量上传任务 SQLite 存储
   services/dataset_store.py      数据集 SQLite 存储
   services/dataset_service.py    数据集、Excel、识别编排服务
+  services/lantek_registry.py    读取 Lantek 注册表安装目录
 desktop/
   main.js                        Electron 主进程和桌面菜单
   preload.js                     Electron preload
@@ -170,6 +172,22 @@ runtime/data/tasks.sqlite3
 ```
 
 在桌面程序菜单中点击“帮助 -> 打开运行目录”可直接打开该目录。
+
+## 导入至 Expert
+
+数据集页面点击“导入设置”可选择导入器：
+
+- `Procesos`：生成 `.LST` 和 `.prc`，再调用 `Expert\Procesos.exe`。
+- `Masterlink`：生成带 UTF-8 BOM 的 XML，再调用 `System\Common\XMLImporter.exe`。
+
+Lantek 安装目录从注册表读取：
+
+```text
+HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Lantek
+MainDir
+```
+
+导入命令执行完成后，程序只提示“已执行完成”，不判断 Lantek 内部是否导入成功，需要打开套料软件确认结果。
 
 ## 常见问题
 

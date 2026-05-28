@@ -36,6 +36,7 @@ class DatasetStore:
                     name TEXT NOT NULL UNIQUE,
                     status TEXT NOT NULL DEFAULT 'unrecognized',
                     source TEXT NOT NULL DEFAULT 'manual',
+                    expert_importer TEXT NOT NULL DEFAULT 'Procesos',
                     copied_from_id TEXT,
                     last_error TEXT,
                     created_at TEXT NOT NULL,
@@ -82,8 +83,11 @@ class DatasetStore:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_datasets_status ON datasets(status)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_dataset_items_dataset ON dataset_items(dataset_id, row_order)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_dataset_items_status ON dataset_items(status)")
-            columns = {row["name"] for row in conn.execute("PRAGMA table_info(dataset_items)").fetchall()}
-            if "quantity" not in columns:
+            dataset_columns = {row["name"] for row in conn.execute("PRAGMA table_info(datasets)").fetchall()}
+            if "expert_importer" not in dataset_columns:
+                conn.execute("ALTER TABLE datasets ADD COLUMN expert_importer TEXT NOT NULL DEFAULT 'Procesos'")
+            item_columns = {row["name"] for row in conn.execute("PRAGMA table_info(dataset_items)").fetchall()}
+            if "quantity" not in item_columns:
                 conn.execute("ALTER TABLE dataset_items ADD COLUMN quantity INTEGER")
 
     def mark_interrupted_work_failed(self) -> None:
@@ -120,17 +124,18 @@ class DatasetStore:
         name: str,
         source: str,
         copied_from_id: str | None = None,
+        expert_importer: str = "Procesos",
     ) -> Dict[str, Any]:
         now = utc_now()
         with self._lock, self._connect() as conn:
             conn.execute(
                 """
                 INSERT INTO datasets (
-                    id, name, status, source, copied_from_id, created_at, updated_at
+                    id, name, status, source, expert_importer, copied_from_id, created_at, updated_at
                 )
-                VALUES (?, ?, 'unrecognized', ?, ?, ?, ?)
+                VALUES (?, ?, 'unrecognized', ?, ?, ?, ?, ?)
                 """,
-                (dataset_id, name, source, copied_from_id, now, now),
+                (dataset_id, name, source, expert_importer, copied_from_id, now, now),
             )
         row = self.get_dataset(dataset_id)
         if row is None:
@@ -172,6 +177,7 @@ class DatasetStore:
         allowed = {
             "name",
             "status",
+            "expert_importer",
             "last_error",
             "recognized_at",
             "recognition_started_at",

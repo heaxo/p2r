@@ -409,6 +409,26 @@
       white-space: nowrap;
     }
 
+    .expert-progress {
+      max-width: 520px;
+      margin-top: 6px;
+    }
+
+    .expert-progress-track {
+      height: 6px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #e5e7eb;
+    }
+
+    .expert-progress-fill {
+      width: 0;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--app-blue);
+      transition: width .24s ease;
+    }
+
     @media (max-width: 980px) {
       body {
         overflow: auto;
@@ -490,10 +510,18 @@
             <div id="selectedTitle" class="h6 mb-1">未选择数据集</div>
             <div id="selectedMeta" class="small-muted"></div>
             <div id="detailMessage" class="message-line text-secondary"></div>
+            <div id="expertImportProgress" class="expert-progress" hidden>
+              <div class="expert-progress-track">
+                <div id="expertImportProgressFill" class="expert-progress-fill"></div>
+              </div>
+              <div id="expertImportProgressText" class="small-muted mt-1"></div>
+            </div>
           </div>
           <div class="d-flex flex-wrap justify-content-end gap-2">
             <button id="openItemBtn" class="btn btn-primary btn-sm" type="button" disabled>新增数据</button>
             <button id="recognizeDatasetBtn" class="btn btn-outline-primary btn-sm" type="button" disabled>开始识别</button>
+            <button id="importSettingsBtn" class="btn btn-outline-secondary btn-sm" type="button" disabled>导入设置</button>
+            <button id="importExpertBtn" class="btn btn-outline-primary btn-sm" type="button" disabled>导入至Expert</button>
             <button id="copyDatasetBtn" class="btn btn-outline-secondary btn-sm" type="button" disabled>复制</button>
             <button id="downloadDxfBtn" class="btn btn-outline-secondary btn-sm" type="button" disabled>下载 DXF</button>
             <button id="deleteDatasetBtn" class="btn btn-outline-danger btn-sm" type="button" disabled>删除</button>
@@ -546,6 +574,31 @@
           <div class="modal-footer">
             <button type="button" class="btn btn-outline-secondary" data-close-modal="datasetModal">取消</button>
             <button class="btn btn-primary" type="submit">创建</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div id="importSettingsModal" class="modal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <form id="importSettingsForm">
+          <div class="modal-header">
+            <h2 class="modal-title fs-6">导入设置</h2>
+            <button type="button" class="btn-close" data-close-modal="importSettingsModal" aria-label="关闭"></button>
+          </div>
+          <div class="modal-body">
+            <label for="expertImporter" class="form-label">导入器</label>
+            <select id="expertImporter" class="form-select">
+              <option value="Procesos">Procesos</option>
+              <option value="Masterlink">Masterlink</option>
+            </select>
+            <div id="importSettingsMessage" class="message-line text-secondary mt-3"></div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-outline-secondary" data-close-modal="importSettingsModal">取消</button>
+            <button class="btn btn-primary" type="submit">保存</button>
           </div>
         </form>
       </div>
@@ -639,12 +692,19 @@
       editingItem: null,
       pollTimer: null,
       itemPreviewUrl: null,
+      importTimer: null,
+      importStartedAt: 0,
+      importDurationMs: 0,
+      importInProgress: false,
     };
 
     const els = {
       datasetList: document.getElementById('datasetList'),
       listMessage: document.getElementById('listMessage'),
       detailMessage: document.getElementById('detailMessage'),
+      expertImportProgress: document.getElementById('expertImportProgress'),
+      expertImportProgressFill: document.getElementById('expertImportProgressFill'),
+      expertImportProgressText: document.getElementById('expertImportProgressText'),
       selectedTitle: document.getElementById('selectedTitle'),
       selectedMeta: document.getElementById('selectedMeta'),
       createDatasetForm: document.getElementById('createDatasetForm'),
@@ -655,6 +715,11 @@
       openCreateDatasetBtn: document.getElementById('openCreateDatasetBtn'),
       uploadExcelBtn: document.getElementById('uploadExcelBtn'),
       downloadTemplateBtn: document.getElementById('downloadTemplateBtn'),
+      importSettingsBtn: document.getElementById('importSettingsBtn'),
+      importExpertBtn: document.getElementById('importExpertBtn'),
+      importSettingsForm: document.getElementById('importSettingsForm'),
+      expertImporter: document.getElementById('expertImporter'),
+      importSettingsMessage: document.getElementById('importSettingsMessage'),
       copyDatasetBtn: document.getElementById('copyDatasetBtn'),
       deleteDatasetBtn: document.getElementById('deleteDatasetBtn'),
       recognizeDatasetBtn: document.getElementById('recognizeDatasetBtn'),
@@ -860,11 +925,13 @@
     function renderSelectedDataset() {
       const dataset = state.selected;
       const items = dataset ? dataset.items || [] : [];
-      els.openItemBtn.disabled = !dataset;
-      els.copyDatasetBtn.disabled = !dataset;
-      els.deleteDatasetBtn.disabled = !dataset || dataset.status === 'recognizing';
-      els.recognizeDatasetBtn.disabled = !dataset || dataset.status === 'recognizing' || !items.length;
-      els.downloadDxfBtn.disabled = !dataset || !items.some(item => item.urls && item.urls.dxf);
+      els.openItemBtn.disabled = !dataset || state.importInProgress;
+      els.importSettingsBtn.disabled = !dataset || state.importInProgress;
+      els.importExpertBtn.disabled = !dataset || state.importInProgress;
+      els.copyDatasetBtn.disabled = !dataset || state.importInProgress;
+      els.deleteDatasetBtn.disabled = !dataset || dataset.status === 'recognizing' || state.importInProgress;
+      els.recognizeDatasetBtn.disabled = !dataset || dataset.status === 'recognizing' || !items.length || state.importInProgress;
+      els.downloadDxfBtn.disabled = !dataset || !items.some(item => item.urls && item.urls.dxf) || state.importInProgress;
 
       if (!dataset) {
         els.selectedTitle.textContent = '未选择数据集';
@@ -873,11 +940,12 @@
         els.emptyItems.hidden = false;
         els.itemsTableWrap.hidden = true;
         els.itemsBody.innerHTML = '';
+        hideExpertProgress();
         return;
       }
 
       els.selectedTitle.innerHTML = `<span class="me-2">${escapeHtml(dataset.name)}</span>${statusBadge(dataset.status)}`;
-      els.selectedMeta.textContent = `${dataset.item_count || 0} 条数据，完成 ${dataset.completed_count || 0}，失败 ${dataset.failed_count || 0}，创建于 ${formatDate(dataset.created_at)}`;
+      els.selectedMeta.textContent = `${dataset.item_count || 0} 条数据，完成 ${dataset.completed_count || 0}，失败 ${dataset.failed_count || 0}，导入器 ${dataset.expert_importer || 'Procesos'}，创建于 ${formatDate(dataset.created_at)}`;
       els.itemCount.textContent = `${items.length} 条`;
       renderItems(items);
     }
@@ -1100,6 +1168,87 @@
       }
     }
 
+    function openImportSettingsModal() {
+      if (!state.selected) return;
+      els.expertImporter.value = state.selected.expert_importer || 'Procesos';
+      setMessage(els.importSettingsMessage, '');
+      showModal('importSettingsModal');
+    }
+
+    async function saveImportSettings(event) {
+      event.preventDefault();
+      if (!state.selectedId) return;
+      const form = new FormData();
+      form.append('expert_importer', els.expertImporter.value || 'Procesos');
+      setMessage(els.importSettingsMessage, '正在保存...');
+      try {
+        const payload = await request(`/datasets/${state.selectedId}/import-settings`, { method: 'PUT', body: form });
+        state.selected = payload.dataset;
+        renderSelectedDataset();
+        hideModal('importSettingsModal');
+        await loadDatasets(state.selectedId);
+        setMessage(els.detailMessage, '导入设置已保存', 'success');
+      } catch (error) {
+        showError(els.importSettingsMessage, error);
+      }
+    }
+
+    async function importSelectedDatasetToExpert() {
+      if (!state.selectedId || !state.selected || state.importInProgress) return;
+      state.importInProgress = true;
+      renderSelectedDataset();
+      setMessage(els.detailMessage, '');
+      startExpertFakeProgress((state.selected.items || []).length);
+      try {
+        const payload = await request(`/datasets/${state.selectedId}/import-expert`, { method: 'POST' });
+        finishExpertFakeProgress(payload.message || '命令已执行完成，请打开套料软件确认是否成功导入');
+      } catch (error) {
+        stopExpertFakeProgress();
+        showError(els.detailMessage, error);
+      } finally {
+        state.importInProgress = false;
+        renderSelectedDataset();
+      }
+    }
+
+    function startExpertFakeProgress(itemCount) {
+      stopExpertFakeProgress();
+      state.importStartedAt = Date.now();
+      state.importDurationMs = Math.max(1, Number(itemCount || 0)) * 3500 + 5000;
+      setExpertProgress(3, '正在准备导入文件...');
+      state.importTimer = setInterval(() => {
+        const elapsed = Date.now() - state.importStartedAt;
+        const percent = Math.min(95, Math.round((elapsed / state.importDurationMs) * 100));
+        setExpertProgress(percent, `正在执行导入命令，预计 ${Math.ceil(Math.max(0, state.importDurationMs - elapsed) / 1000)} 秒`);
+      }, 300);
+    }
+
+    function finishExpertFakeProgress(text) {
+      stopExpertFakeProgress();
+      setExpertProgress(100, text);
+      setMessage(els.detailMessage, text, 'success');
+    }
+
+    function stopExpertFakeProgress() {
+      if (state.importTimer) {
+        clearInterval(state.importTimer);
+        state.importTimer = null;
+      }
+    }
+
+    function hideExpertProgress() {
+      stopExpertFakeProgress();
+      els.expertImportProgress.hidden = true;
+      els.expertImportProgressFill.style.width = '0%';
+      els.expertImportProgressText.textContent = '';
+    }
+
+    function setExpertProgress(percent, text) {
+      els.expertImportProgress.hidden = false;
+      els.expertImportProgressFill.style.width = `${Math.max(0, Math.min(100, percent))}%`;
+      els.expertImportProgressText.textContent = text || '';
+    }
+
     async function deleteItem(itemId) {
       if (!state.selectedId) return;
       if (!window.confirm('确认删除这条数据？')) return;
@@ -1176,6 +1325,9 @@
     els.createDatasetForm.addEventListener('submit', createDataset);
     els.downloadTemplateBtn.addEventListener('click', () => downloadFile('/datasets/excel-template', 'dataset_template.xlsx').catch(error => showError(els.listMessage, error)));
     els.openItemBtn.addEventListener('click', () => openItemModal(null));
+    els.importSettingsBtn.addEventListener('click', openImportSettingsModal);
+    els.importSettingsForm.addEventListener('submit', saveImportSettings);
+    els.importExpertBtn.addEventListener('click', importSelectedDatasetToExpert);
     els.copyDatasetBtn.addEventListener('click', copySelectedDataset);
     els.deleteDatasetBtn.addEventListener('click', deleteSelectedDataset);
     els.recognizeDatasetBtn.addEventListener('click', recognizeSelectedDataset);

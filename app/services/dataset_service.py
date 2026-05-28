@@ -5,8 +5,11 @@ import json
 import math
 import re
 import shutil
+import subprocess
 import traceback
 import uuid
+import codecs
+import xml.etree.ElementTree as ET
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -20,7 +23,11 @@ from app.core.algorithm import IMAGE_EXTS, json_safe
 from app.errors import public_error_message, sanitize_public_error_message
 from app.services.dxf_preview import create_dxf_preview
 from app.services.dataset_store import DatasetStore
+from app.services.lantek_registry import RegistryHelper
 from app.services.measure_service import MeasureService
+
+
+EXPERT_IMPORTERS = {"Procesos", "Masterlink"}
 
 
 class DatasetNameConflict(ValueError):
@@ -83,6 +90,12 @@ class DatasetService:
         response["completed_count"] = sum(1 for item in items if item["status"] == "completed")
         response["failed_count"] = sum(1 for item in items if item["status"] == "failed")
         return response
+
+    def update_import_settings(self, dataset_id: str, expert_importer: str) -> Dict[str, Any]:
+        self._require_dataset(dataset_id)
+        importer = self._normalize_expert_importer(expert_importer)
+        self.store.update_dataset(dataset_id, expert_importer=importer)
+        return self.get_dataset_detail(dataset_id)
 
     async def add_item(self, dataset_id: str, *, image: UploadFile, fields: Dict[str, Any]) -> Dict[str, Any]:
         self._require_dataset(dataset_id)
@@ -169,6 +182,7 @@ class DatasetService:
             name=new_name,
             source="copy",
             copied_from_id=dataset_id,
+            expert_importer=source.get("expert_importer") or "Procesos",
         )
         for item in self.store.list_items(dataset_id):
             image_path = self._copy_existing_image(new_dataset_id, item.get("image_path"))
@@ -404,6 +418,192 @@ class DatasetService:
         filename = f"{dataset['name']}_dxf_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
         return zip_buffer.getvalue(), filename, added
 
+    def import_to_expert(self, dataset_id: str) -> Dict[str, Any]:
+        dataset, rows = self._expert_import_rows(dataset_id)
+        importer = self._normalize_expert_importer(dataset.get("expert_importer") or "Procesos")
+        import_dir = self._expert_import_dir(dataset)
+
+        if importer == "Masterlink":
+            generated = self._build_masterlink_import(import_dir, dataset, rows)
+            batch_path = self._build_masterlink_batch(generated["xml_path"])
+        else:
+            generated = self._build_procesos_import(import_dir, dataset, rows)
+            batch_path = self._build_procesos_batch(generated["prc_path"])
+
+        result = self._run_import_batch(batch_path)
+        return {
+            "ok": True,
+            "importer": importer,
+            "dataset_id": dataset_id,
+            "row_count": len(rows),
+            "import_dir": str(import_dir),
+            "batch_path": str(batch_path),
+            "generated_files": {key: str(value) for key, value in generated.items()},
+            "returncode": result.returncode,
+            "message": "命令已执行完成，请打开套料软件确认是否成功导入",
+        }
+
+    def _expert_import_rows(self, dataset_id: str) -> tuple[Dict[str, Any], list[Dict[str, Any]]]:
+        dataset = self._require_dataset(dataset_id)
+        rows: list[Dict[str, Any]] = []
+        for item in self.store.list_items(dataset_id):
+            result = self._load_result(item)
+            dxf_value = ((result or {}).get("paths") or {}).get("dxf")
+            if not dxf_value:
+                continue
+            dxf_path = Path(str(dxf_value))
+            if not dxf_path.exists() or not dxf_path.is_file():
+                continue
+            reference = (
+                self._as_text(item.get("plate_no"))
+                or self._safe_file_stem(item.get("original_filename"))
+                or self._as_text(item.get("id"))
+                or "plate"
+            )
+            rows.append(
+                {
+                    "reference": reference,
+                    "material": self._as_text(item.get("material")),
+                    "thickness": self._number_text(item.get("thickness_mm"), "0"),
+                    "quantity": self._positive_int_text(item.get("quantity"), "1"),
+                    "dxf_path": str(dxf_path.resolve()),
+                }
+            )
+
+        if not rows:
+            raise FileNotFoundError("数据集中没有可导入的已完成 DXF 文件")
+        return dataset, rows
+
+    def _build_procesos_import(self, import_dir: Path, dataset: Dict[str, Any], rows: list[Dict[str, Any]]) -> Dict[str, Path]:
+        stem = self._safe_file_stem(dataset.get("name") or dataset.get("id") or "dataset")
+        lst_path = import_dir / f"{stem}.LST"
+        prc_path = import_dir / f"{stem}.prc"
+
+        lines = []
+        for row in rows:
+            lines.append(
+                f"{self._quote_lst(row['reference'])} "
+                f"0 0 {row['thickness']} "
+                f"{self._quote_lst(row['material'])} "
+                f"{row['quantity']} 0 "
+                f"{self._quote_lst('')} {self._quote_lst('')} {self._quote_lst('')} "
+                f"2 {self._quote_lst(row['dxf_path'])}"
+            )
+        lst_path.write_text("\r\n".join(lines) + "\r\n", encoding="utf-8")
+        prc_path.write_text(f"0 FILEPROLT 8.02\r\n39 1 {self._quote_lst(str(lst_path.resolve()))}\r\n", encoding="utf-8")
+        return {"lst_path": lst_path, "prc_path": prc_path}
+
+    def _build_masterlink_import(self, import_dir: Path, dataset: Dict[str, Any], rows: list[Dict[str, Any]]) -> Dict[str, Path]:
+        stem = self._safe_file_stem(dataset.get("name") or dataset.get("id") or "dataset")
+        xml_path = import_dir / f"{stem}.xml"
+        root = ET.Element(
+            "DATAEX",
+            {
+                "xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
+                "xmlns:xsd": "http://www.w3.org/2001/XMLSchema",
+            },
+        )
+
+        for row in rows:
+            product = ET.SubElement(root, "COMMAND", {"Name": "Import", "TblRef": "PRODUCTS", "Identifier": "0", "Task": "None"})
+            self._xml_field(product, "Reference", row["reference"], "20")
+            self._xml_field(product, "PCategory", "51", "70")
+            self._xml_field(product, "Name", row["reference"], "20")
+            self._xml_field(product, "Material", row["material"], "20")
+            self._xml_field(product, "Thickness", row["thickness"], "100")
+            self._xml_field(product, "Length", "0", "100")
+            self._xml_field(product, "Width", "0", "100")
+            self._xml_field(product, "CAMQuantity", row["quantity"], "100")
+            self._xml_field(product, "Remnant", "1", "10")
+
+            geometry = ET.SubElement(root, "COMMAND", {"Name": "Import", "TblRef": "IMPORTGEO", "Identifier": "0", "Task": "None"})
+            self._xml_field(geometry, "Product", row["reference"], "20")
+            self._xml_field(geometry, "GeometryPath", row["dxf_path"], "20")
+            self._xml_field(geometry, "GeometryType", "dxf", "20")
+
+        ET.indent(root, space="  ")
+        content = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+        xml_path.write_bytes(codecs.BOM_UTF8 + content)
+        return {"xml_path": xml_path}
+
+    def _build_procesos_batch(self, prc_path: Path) -> Path:
+        lantek_dir = self._require_lantek_install_dir()
+        exe_path = lantek_dir / "Expert" / "Procesos.exe"
+        if not exe_path.exists():
+            raise FileNotFoundError(f"未找到 Procesos.exe：{exe_path}")
+        batch_path = prc_path.with_name(f"prc-{uuid.uuid4().hex[:12]}.bat")
+        batch_path.write_text(
+            "\r\n".join(
+                [
+                    "@ECHO OFF",
+                    "chcp 65001 >nul",
+                    ":LOOP",
+                    'tasklist | find /i "procesos.exe"',
+                    "IF ERRORLEVEL 1 (",
+                    "GOTO CONTINUE",
+                    ") ELSE (",
+                    "ECHO Procesos.exe is still running",
+                    "Timeout /T 5 /Nobreak",
+                    "GOTO LOOP",
+                    ")",
+                    ":CONTINUE",
+                    f'START /W "" "{exe_path}" "{prc_path.resolve()}"',
+                    "EXIT",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        return batch_path
+
+    def _build_masterlink_batch(self, xml_path: Path) -> Path:
+        lantek_dir = self._require_lantek_install_dir()
+        exe_path = lantek_dir / "System" / "Common" / "XMLImporter.exe"
+        if not exe_path.exists():
+            raise FileNotFoundError(f"未找到 XMLImporter.exe：{exe_path}")
+        batch_path = xml_path.with_name(f"xml-import-{uuid.uuid4().hex[:12]}.bat")
+        batch_path.write_text(
+            "\r\n".join(
+                [
+                    "@ECHO OFF",
+                    "chcp 65001 >nul",
+                    ":LOOP",
+                    'tasklist | find /i "XMLImporter.exe"',
+                    "IF ERRORLEVEL 1 (",
+                    "GOTO CONTINUE",
+                    ") ELSE (",
+                    "ECHO XMLImporter.exe is still running",
+                    "Timeout /T 5 /Nobreak",
+                    "GOTO LOOP",
+                    ")",
+                    ":CONTINUE",
+                    f'START /W "" "{exe_path}" -src "{xml_path.resolve()}"',
+                    "EXIT",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        return batch_path
+
+    def _run_import_batch(self, batch_path: Path) -> subprocess.CompletedProcess[str]:
+        creationflags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+        logger.info("Running Expert import batch: {}", batch_path)
+        return subprocess.run(
+            ["cmd.exe", "/c", str(batch_path)],
+            cwd=str(batch_path.parent),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            creationflags=creationflags,
+            check=False,
+        )
+
+    def _require_lantek_install_dir(self) -> Path:
+        install_dir = RegistryHelper.get_install_dir()
+        if not install_dir:
+            raise FileNotFoundError("未从注册表读取到 Lantek 安装目录：HKLM\\SOFTWARE\\WOW6432Node\\Lantek\\MainDir")
+        return Path(install_dir)
+
     def _rename_result_dxf(self, result: Dict[str, Any], item: Dict[str, Any]) -> Dict[str, Any]:
         paths = dict(result.get("paths") or {})
         dxf_value = paths.get("dxf")
@@ -505,6 +705,7 @@ class DatasetService:
             "name": row.get("name"),
             "status": row.get("status"),
             "source": row.get("source"),
+            "expert_importer": row.get("expert_importer") or "Procesos",
             "copied_from_id": row.get("copied_from_id"),
             "last_error": sanitize_public_error_message(row.get("last_error") or "", fallback=""),
             "created_at": row.get("created_at"),
@@ -655,6 +856,12 @@ class DatasetService:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
+    def _expert_import_dir(self, dataset: Dict[str, Any]) -> Path:
+        dataset_id = str(dataset.get("id") or uuid.uuid4().hex)
+        path = self.settings.output_root / "_expert_imports" / dataset_id / datetime.now().strftime("%Y%m%d_%H%M%S")
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
     def _unique_dataset_image_path(self, dataset_id: str, stem: str, suffix: str) -> Path:
         images_dir = self._dataset_dir(dataset_id) / "images"
         images_dir.mkdir(parents=True, exist_ok=True)
@@ -670,6 +877,49 @@ class DatasetService:
     def _safe_file_stem(self, value: Any) -> str:
         stem = Path(self._as_text(value) or "plate").stem
         return re.sub(r'[\\/:*?"<>|\s]+', "_", stem).strip(" ._") or "plate"
+
+    def _normalize_expert_importer(self, value: Any) -> str:
+        importer = self._as_text(value) or "Procesos"
+        if importer.lower() == "masterlink":
+            return "Masterlink"
+        if importer.lower() == "procesos":
+            return "Procesos"
+        raise ValueError("导入器只能选择 Procesos 或 Masterlink")
+
+    def _quote_lst(self, value: Any) -> str:
+        text = self._as_text(value).replace('"', '""')
+        return f'"{text}"'
+
+    def _xml_field(self, parent: ET.Element, ref: str, value: Any, field_type: str) -> None:
+        ET.SubElement(
+            parent,
+            "FIELD",
+            {
+                "FldRef": ref,
+                "FldValue": self._as_text(value),
+                "FldType": field_type,
+            },
+        )
+
+    def _number_text(self, value: Any, default: str) -> str:
+        if value is None or value == "":
+            return default
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return default
+        if not math.isfinite(number):
+            return default
+        return str(int(number)) if number.is_integer() else f"{number:.6f}".rstrip("0").rstrip(".")
+
+    def _positive_int_text(self, value: Any, default: str) -> str:
+        if value is None or value == "":
+            return default
+        try:
+            number = int(float(value))
+        except (TypeError, ValueError):
+            return default
+        return str(number) if number > 0 else default
 
     def _require_dataset(self, dataset_id: str) -> Dict[str, Any]:
         dataset = self.store.get_dataset(dataset_id)

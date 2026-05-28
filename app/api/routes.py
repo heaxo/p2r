@@ -173,6 +173,20 @@ async def get_dataset(dataset_id: str) -> dict:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据集不存在") from exc
 
 
+@router.put("/datasets/{dataset_id}/import-settings", dependencies=[Depends(require_token)])
+async def update_dataset_import_settings(
+    dataset_id: str,
+    expert_importer: Annotated[str, Form(description="导入器：Procesos 或 Masterlink")] = "Procesos",
+) -> dict:
+    try:
+        dataset = dataset_service.update_import_settings(dataset_id, expert_importer)
+        return {"ok": True, "dataset": dataset}
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据集不存在") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+
 @router.post("/datasets/{dataset_id}/copy", dependencies=[Depends(require_token)])
 async def copy_dataset(
     dataset_id: str,
@@ -205,6 +219,18 @@ async def recognize_dataset(dataset_id: str) -> dict:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据集不存在") from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/datasets/{dataset_id}/import-expert", dependencies=[Depends(require_token)])
+async def import_dataset_to_expert(dataset_id: str) -> dict:
+    try:
+        return await run_in_threadpool(dataset_service.import_to_expert, dataset_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据集不存在") from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 
 
 @router.get("/datasets/{dataset_id}/download-dxf", dependencies=[Depends(require_token)])
