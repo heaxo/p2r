@@ -1,0 +1,20 @@
+{
+  "type": "ChArUco",
+  "paper_width_mm": 210.0,
+  "paper_height_mm": 297.0,
+  "dpi": 600,
+  "dictionary": "DICT_4X4_50",
+  "cols_squares_x": 7,
+  "rows_squares_y": 10,
+  "square_length_mm": 25.0,
+  "marker_length_mm": 18.0,
+  "board_width_mm": 175.0,
+  "board_height_mm": 250.0,
+  "paper_width_px": 4961,
+  "paper_height_px": 7016,
+  "square_length_px": 591,
+  "marker_length_px": 425,
+  "board_offset_x_px": 412,
+  "board_offset_y_px": 553,
+  "print_note": "打印时必须选择 100% / 实际大小，不要选择适应页面。"
+}
