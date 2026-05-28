@@ -134,15 +134,48 @@ y
 - `x` 和 `y` 是明确指定 DXF X/Y 方向目标尺寸；当 `尺寸1/尺寸2` 有值时优先使用 `尺寸1/尺寸2`。
 - 布尔列可填写 `是/否`、`true/false` 或 `1/0`。
 
-## 打包桌面版
+## 打包命令
 
-先安装 PyInstaller 打包依赖：
+先安装打包依赖：
 
 ```powershell
 .venv\Scripts\python -m pip install -r desktop\requirements-build.txt
+npm install
 ```
 
-执行打包：
+### 只打包后端
+
+后端使用 PyInstaller 打包，入口是 `desktop/backend_entry.py`，配置文件是 `desktop/p2r-backend.spec`。
+
+```powershell
+npm run backend:build
+```
+
+等价命令：
+
+```powershell
+.venv\Scripts\python -m PyInstaller desktop\p2r-backend.spec --noconfirm
+```
+
+输出目录：
+
+```text
+dist/p2r-backend/
+```
+
+### 前端资源
+
+当前前端是 `frontend/` 下的静态 HTML/CSS/JS，没有单独的前端构建命令。打包后端时，`desktop/p2r-backend.spec` 会把整个 `frontend/` 目录一起打进 `dist/p2r-backend/`。
+
+如果只改了前端页面，重新执行后端打包即可：
+
+```powershell
+npm run backend:build
+```
+
+### 整体桌面版打包
+
+整体桌面版会先打后端，再用 electron-builder 打 Windows 安装包：
 
 ```powershell
 npm run desktop:pack
