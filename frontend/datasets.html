@@ -711,6 +711,7 @@
 
   <script>
     const AUTH_TOKEN = 'tk_c2VjcmV0LXJhbmRvbS10b2tlbi0xMjM0NTY3OA';
+    const DATASET_SAM_MODEL = 'sam2:small';
     const state = {
       datasets: [],
       selectedId: null,
@@ -1229,7 +1230,11 @@
       if (!state.selectedId) return;
       setMessage(els.detailMessage, '已提交识别任务...');
       try {
-        const payload = await request(`/datasets/${state.selectedId}/recognize`, { method: 'POST' });
+        const form = new FormData();
+        if (DATASET_SAM_MODEL.trim()) {
+          form.append('sam_model', DATASET_SAM_MODEL.trim());
+        }
+        const payload = await request(`/datasets/${state.selectedId}/recognize`, { method: 'POST', body: form });
         state.selected = payload.dataset;
         renderSelectedDataset();
         startOrStopPolling();

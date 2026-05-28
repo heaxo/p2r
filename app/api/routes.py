@@ -214,9 +214,12 @@ async def delete_dataset(dataset_id: str) -> dict:
 
 
 @router.post("/datasets/{dataset_id}/recognize", dependencies=[Depends(require_token)])
-async def recognize_dataset(dataset_id: str) -> dict:
+async def recognize_dataset(
+    dataset_id: str,
+    sam_model: Annotated[str | None, Form(description="可选，SAM2模型名；不传则读取SAM_MODEL")] = None,
+) -> dict:
     try:
-        return {"ok": True, "dataset": dataset_service.enqueue_recognition(dataset_id)}
+        return {"ok": True, "dataset": dataset_service.enqueue_recognition(dataset_id, sam_model=sam_model)}
     except KeyError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据集不存在") from exc
     except ValueError as exc:

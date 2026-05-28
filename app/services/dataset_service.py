@@ -227,19 +227,26 @@ class DatasetService:
         logger.info("Dataset copied: source_id={}, new_id={}, name={}", dataset_id, new_dataset_id, new_name)
         return self.get_dataset_detail(dataset["id"])
 
-    def enqueue_recognition(self, dataset_id: str) -> Dict[str, Any]:
+    def enqueue_recognition(self, dataset_id: str, *, sam_model: str | None = None) -> Dict[str, Any]:
         dataset = self.store.get_dataset(dataset_id)
         if dataset is None:
             raise KeyError(dataset_id)
         if dataset.get("status") == "recognizing":
             raise ValueError("数据集正在识别中")
 
+        selected_sam_model = self._as_text(sam_model) or None
         queued_count = self.store.begin_recognition(dataset_id)
-        self._executor.submit(self._run_dataset, dataset_id)
-        logger.info("Dataset recognition queued: id={}, name={}, queued_count={}", dataset_id, dataset.get("name"), queued_count)
+        self._executor.submit(self._run_dataset, dataset_id, selected_sam_model)
+        logger.info(
+            "Dataset recognition queued: id={}, name={}, queued_count={}, sam_model={}",
+            dataset_id,
+            dataset.get("name"),
+            queued_count,
+            selected_sam_model or self.settings.sam_model,
+        )
         return self.get_dataset_detail(dataset_id)
 
-    def _run_dataset(self, dataset_id: str) -> None:
+    def _run_dataset(self, dataset_id: str, sam_model: str | None = None) -> None:
         failed_count = 0
         last_error = None
         items = self.store.list_items(dataset_id)
@@ -263,7 +270,7 @@ class DatasetService:
                 args = self.measure_service.build_args(
                     image_path=image_path,
                     model_path=None,
-                    sam_model=None,
+                    sam_model=sam_model,
                     imgsz=None,
                     conf=None,
                     yolo_input_mode="canonical_path",
