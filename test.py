@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-IMG_PATH = "input.jpg"
+IMG_PATH = "input2.jpg"
 OUT_PATH = "corrected.jpg"
 
 CANVAS_W = 1200

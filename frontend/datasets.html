@@ -328,6 +328,24 @@
       border-radius: 6px;
     }
 
+    .btn .icon-svg,
+    .link-with-icon .icon-svg {
+      width: 14px;
+      height: 14px;
+      margin-right: 5px;
+      vertical-align: -2px;
+      stroke-width: 2.2;
+    }
+
+    .btn-icon .icon-svg {
+      margin-right: 0;
+    }
+
+    .dimension-lines {
+      display: grid;
+      gap: 2px;
+    }
+
     .btn-primary {
       background-color: var(--app-blue);
       border-color: var(--app-blue);
@@ -487,7 +505,7 @@
         <div class="sidebar-head">
           <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
             <strong>数据集</strong>
-            <button id="refreshBtn" class="btn btn-outline-secondary btn-sm btn-icon" type="button" title="刷新">↻</button>
+            <button id="refreshBtn" class="btn btn-outline-secondary btn-sm btn-icon" type="button" title="刷新"></button>
           </div>
           <div class="d-grid gap-2">
             <button id="openCreateDatasetBtn" class="btn btn-primary btn-sm" type="button">新建数据集</button>
@@ -520,6 +538,7 @@
           <div class="d-flex flex-wrap justify-content-end gap-2">
             <button id="openItemBtn" class="btn btn-primary btn-sm" type="button" disabled>新增数据</button>
             <button id="recognizeDatasetBtn" class="btn btn-outline-primary btn-sm" type="button" disabled>开始识别</button>
+            <button id="clearDatasetRecognitionBtn" class="btn btn-outline-secondary btn-sm" type="button" disabled>清除识别状态</button>
             <button id="importSettingsBtn" class="btn btn-outline-secondary btn-sm" type="button" disabled>导入设置</button>
             <button id="importExpertBtn" class="btn btn-outline-primary btn-sm" type="button" disabled>导入至Expert</button>
             <button id="copyDatasetBtn" class="btn btn-outline-secondary btn-sm" type="button" disabled>复制</button>
@@ -654,12 +673,19 @@
                 <input id="targetY" class="form-control" type="number" step="0.001" min="0" />
               </div>
               <div class="col-6 col-md-2">
+                <label for="paperSource" class="form-label">A4纸识别</label>
+                <select id="paperSource" class="form-select">
+                  <option value="standard">标准识别</option>
+                  <option value="training">训练集识别</option>
+                </select>
+              </div>
+              <div class="col-6 col-md-2">
                 <label for="notchWidth" class="form-label">夹钳宽度 mm</label>
-                <input id="notchWidth" class="form-control" type="number" step="0.001" min="0" value="80" />
+                <input id="notchWidth" class="form-control" type="number" step="0.001" min="0" value="200" />
               </div>
               <div class="col-6 col-md-2">
                 <label for="notchDepth" class="form-label">夹钳深度 mm</label>
-                <input id="notchDepth" class="form-control" type="number" step="0.001" min="0" value="25" />
+                <input id="notchDepth" class="form-control" type="number" step="0.001" min="0" value="200" />
               </div>
               <div class="col-12 col-md-4 d-flex align-items-end gap-4">
                 <div class="form-check">
@@ -723,6 +749,7 @@
       copyDatasetBtn: document.getElementById('copyDatasetBtn'),
       deleteDatasetBtn: document.getElementById('deleteDatasetBtn'),
       recognizeDatasetBtn: document.getElementById('recognizeDatasetBtn'),
+      clearDatasetRecognitionBtn: document.getElementById('clearDatasetRecognitionBtn'),
       downloadDxfBtn: document.getElementById('downloadDxfBtn'),
       openItemBtn: document.getElementById('openItemBtn'),
       itemForm: document.getElementById('itemForm'),
@@ -740,6 +767,7 @@
       size2: document.getElementById('size2'),
       targetX: document.getElementById('targetX'),
       targetY: document.getElementById('targetY'),
+      paperSource: document.getElementById('paperSource'),
       usePlatePerspective: document.getElementById('usePlatePerspective'),
       notchEnabled: document.getElementById('notchEnabled'),
       notchWidth: document.getElementById('notchWidth'),
@@ -823,6 +851,10 @@
       const clean = escapeHtml(status || 'pending');
       const text = statusText[status] || status || '-';
       return `<span class="badge rounded-pill status-badge status-${clean}">${escapeHtml(text)}</span>`;
+    }
+
+    function paperSourceLabel(value) {
+      return value === 'sam2' ? '标准识别' : '训练集识别';
     }
 
     async function request(path, options = {}) {
@@ -925,12 +957,15 @@
     function renderSelectedDataset() {
       const dataset = state.selected;
       const items = dataset ? dataset.items || [] : [];
+      const hasRecognizedItems = items.some(item => item.status === 'completed');
+      const hasUnrecognizedItems = items.some(item => item.status !== 'completed');
       els.openItemBtn.disabled = !dataset || state.importInProgress;
       els.importSettingsBtn.disabled = !dataset || state.importInProgress;
       els.importExpertBtn.disabled = !dataset || state.importInProgress;
       els.copyDatasetBtn.disabled = !dataset || state.importInProgress;
       els.deleteDatasetBtn.disabled = !dataset || dataset.status === 'recognizing' || state.importInProgress;
-      els.recognizeDatasetBtn.disabled = !dataset || dataset.status === 'recognizing' || !items.length || state.importInProgress;
+      els.recognizeDatasetBtn.disabled = !dataset || dataset.status === 'recognizing' || !items.length || !hasUnrecognizedItems || state.importInProgress;
+      els.clearDatasetRecognitionBtn.disabled = !dataset || dataset.status === 'recognizing' || !hasRecognizedItems || state.importInProgress;
       els.downloadDxfBtn.disabled = !dataset || !items.some(item => item.urls && item.urls.dxf) || state.importInProgress;
 
       if (!dataset) {
@@ -945,7 +980,7 @@
       }
 
       els.selectedTitle.innerHTML = `<span class="me-2">${escapeHtml(dataset.name)}</span>${statusBadge(dataset.status)}`;
-      els.selectedMeta.textContent = `${dataset.item_count || 0} 条数据，完成 ${dataset.completed_count || 0}，失败 ${dataset.failed_count || 0}，导入器 ${dataset.expert_importer || 'Procesos'}，创建于 ${formatDate(dataset.created_at)}`;
+      els.selectedMeta.textContent = `${dataset.item_count || 0} 条数据，完成 ${dataset.completed_count || 0}，未识别 ${items.filter(item => item.status !== 'completed').length}，失败 ${dataset.failed_count || 0}，导入器 ${dataset.expert_importer || 'Procesos'}，创建于 ${formatDate(dataset.created_at)}`;
       els.itemCount.textContent = `${items.length} 条`;
       renderItems(items);
     }
@@ -966,10 +1001,10 @@
             <div class="small-muted">数量：${formatNumber(item.quantity)} · ${escapeHtml(item.material || '-')}${item.thickness_mm ? ` · ${item.thickness_mm} mm` : ''}</div>
           </td>
           <td>
-            <div>尺寸1/2：${formatNumber(item.dxf_target_size_1_mm)} / ${formatNumber(item.dxf_target_size_2_mm)}</div>
-            <div class="small-muted">x/y：${formatNumber(item.dxf_target_x_mm)} / ${formatNumber(item.dxf_target_y_mm)}</div>
+            ${buildDimensionsCell(item)}
           </td>
           <td>
+            <div>A4纸识别：${paperSourceLabel(item.paper_source)}</div>
             <div>钢板透视：${item.use_plate_perspective ? '是' : '否'}</div>
             <div>夹钳修复：${item.dxf_notch_fill_enabled ? '是' : '否'}</div>
             <div class="small-muted">${formatNumber(item.dxf_notch_fill_max_width_mm)} x ${formatNumber(item.dxf_notch_fill_max_depth_mm)} mm</div>
@@ -982,8 +1017,9 @@
           <td>${buildOtherResultLinks(item)}</td>
           <td>
             <div class="btn-group btn-group-sm" role="group">
-              <button class="btn btn-outline-secondary" type="button" data-action="edit" data-id="${item.id}">编辑</button>
-              <button class="btn btn-outline-danger" type="button" data-action="delete" data-id="${item.id}">删除</button>
+              <button class="btn btn-outline-secondary" type="button" data-action="edit" data-id="${item.id}">${iconSvg('edit')}编辑</button>
+              ${item.status === 'completed' ? `<button class="btn btn-outline-secondary" type="button" data-action="clear-recognition" data-id="${item.id}">${iconSvg('rotate')}清除状态</button>` : ''}
+              <button class="btn btn-outline-danger" type="button" data-action="delete" data-id="${item.id}">${iconSvg('trash')}删除</button>
             </div>
           </td>
         `;
@@ -1008,20 +1044,52 @@
             <div class="dxf-name" title="${escapeHtml(name)}">${escapeHtml(name)}</div>
           </div>
           <div class="dxf-actions">
-            <a class="btn btn-outline-primary btn-sm" href="${urls.dxf}" target="_blank">打开 DXF</a>
-            ${urls.dxf_preview ? `<a class="btn btn-outline-secondary btn-sm" href="${urls.dxf_preview}" target="_blank">打开预览</a>` : ''}
+            <a class="btn btn-outline-primary btn-sm" href="${urls.dxf}" target="_blank">${iconSvg('file')}打开 DXF</a>
+            ${urls.dxf_preview ? `<a class="btn btn-outline-secondary btn-sm" href="${urls.dxf_preview}" target="_blank">${iconSvg('image')}打开预览</a>` : ''}
           </div>
         </div>
       `;
     }
 
+    function buildDimensionsCell(item) {
+      const settings = [];
+      if (item.dxf_target_size_1_mm || item.dxf_target_size_2_mm) {
+        settings.push(`尺寸1/2：${formatNumber(item.dxf_target_size_1_mm)} / ${formatNumber(item.dxf_target_size_2_mm)} mm`);
+      }
+      if (item.dxf_target_x_mm || item.dxf_target_y_mm) {
+        settings.push(`x/y：${formatNumber(item.dxf_target_x_mm)} / ${formatNumber(item.dxf_target_y_mm)} mm`);
+      }
+
+      const detected = dimensionPair(item.detected_plate_dimensions, [
+        ['length_mm', 'width_mm'],
+        ['max_length_mm', 'max_width_mm'],
+        ['axis_bbox_width_mm', 'axis_bbox_height_mm'],
+      ]);
+      const finalSize = dimensionPair(item.plate_dimensions, [
+        ['length_mm', 'width_mm'],
+        ['max_length_mm', 'max_width_mm'],
+        ['axis_bbox_width_mm', 'axis_bbox_height_mm'],
+      ]);
+      const dxfOutput = dimensionPair(item.dxf_target_size, [
+        ['output_x_mm', 'output_y_mm'],
+        ['target_x_mm', 'target_y_mm'],
+      ]);
+
+      const lines = [];
+      lines.push(`<div>${settings.length ? escapeHtml(settings.join('；')) : '设置：未指定'}</div>`);
+      lines.push(`<div class="small-muted">识别：${detected || '-'}</div>`);
+      lines.push(`<div class="small-muted">DXF：${dxfOutput || finalSize || '-'}</div>`);
+      if (item.plate_dimensions && item.plate_dimensions.area_m2) {
+        lines.push(`<div class="small-muted">面积：${formatNumber(item.plate_dimensions.area_m2)} m²</div>`);
+      }
+      return `<div class="dimension-lines">${lines.join('')}</div>`;
+    }
+
     function buildOtherResultLinks(item) {
       const urls = item.urls || {};
       const links = [];
-      if (urls.result_json) links.push(`<a class="btn btn-outline-secondary btn-sm" href="${urls.result_json}" target="_blank">JSON</a>`);
-      const dims = item.plate_dimensions || {};
-      const dimension = dims.width_mm && dims.height_mm ? `<div class="small-muted mt-1">${formatNumber(dims.width_mm)} x ${formatNumber(dims.height_mm)} mm</div>` : '';
-      return `${links.length ? `<div class="d-flex flex-wrap gap-1">${links.join('')}</div>` : '<span class="small-muted">暂无</span>'}${dimension}`;
+      if (urls.result_json) links.push(`<a class="btn btn-outline-secondary btn-sm" href="${urls.result_json}" target="_blank">${iconSvg('code')}JSON</a>`);
+      return links.length ? `<div class="d-flex flex-wrap gap-1">${links.join('')}</div>` : '<span class="small-muted">暂无</span>';
     }
 
     function openItemModal(item = null) {
@@ -1037,10 +1105,11 @@
       els.size2.value = item && item.dxf_target_size_2_mm != null ? item.dxf_target_size_2_mm : '';
       els.targetX.value = item && item.dxf_target_x_mm != null ? item.dxf_target_x_mm : '';
       els.targetY.value = item && item.dxf_target_y_mm != null ? item.dxf_target_y_mm : '';
+      els.paperSource.value = !item || item.paper_source === 'sam2' ? 'standard' : 'training';
       els.usePlatePerspective.checked = !!(item && item.use_plate_perspective);
       els.notchEnabled.checked = !!(item && item.dxf_notch_fill_enabled);
-      els.notchWidth.value = item && item.dxf_notch_fill_max_width_mm != null ? item.dxf_notch_fill_max_width_mm : 80;
-      els.notchDepth.value = item && item.dxf_notch_fill_max_depth_mm != null ? item.dxf_notch_fill_max_depth_mm : 25;
+      els.notchWidth.value = item && item.dxf_notch_fill_max_width_mm != null ? item.dxf_notch_fill_max_width_mm : 200;
+      els.notchDepth.value = item && item.dxf_notch_fill_max_depth_mm != null ? item.dxf_notch_fill_max_depth_mm : 200;
       setItemImagePreview(item && item.urls ? item.urls.image : '');
       setMessage(els.itemFormMessage, '');
       showModal('itemModal');
@@ -1065,10 +1134,11 @@
       appendValue(form, 'dxf_target_size_2_mm', els.size2.value);
       appendValue(form, 'dxf_target_x_mm', els.targetX.value);
       appendValue(form, 'dxf_target_y_mm', els.targetY.value);
+      appendValue(form, 'paper_source', els.paperSource.value || 'standard');
       form.append('use_plate_perspective', els.usePlatePerspective.checked ? 'true' : 'false');
       form.append('dxf_notch_fill_enabled', els.notchEnabled.checked ? 'true' : 'false');
-      appendValue(form, 'dxf_notch_fill_max_width_mm', els.notchWidth.value || '80');
-      appendValue(form, 'dxf_notch_fill_max_depth_mm', els.notchDepth.value || '25');
+      appendValue(form, 'dxf_notch_fill_max_width_mm', els.notchWidth.value || '200');
+      appendValue(form, 'dxf_notch_fill_max_depth_mm', els.notchDepth.value || '200');
       return form;
     }
 
@@ -1168,6 +1238,21 @@
       }
     }
 
+    async function clearSelectedDatasetRecognition() {
+      if (!state.selectedId || !state.selected) return;
+      if (!window.confirm(`确认清除数据集“${state.selected.name}”中所有已识别数据的识别状态？`)) return;
+      setMessage(els.detailMessage, '正在清除识别状态...');
+      try {
+        const payload = await request(`/datasets/${state.selectedId}/clear-recognition`, { method: 'POST' });
+        state.selected = payload.dataset;
+        renderSelectedDataset();
+        await loadDatasets(state.selectedId);
+        setMessage(els.detailMessage, '已清除识别状态', 'success');
+      } catch (error) {
+        showError(els.detailMessage, error);
+      }
+    }
+
     function openImportSettingsModal() {
       if (!state.selected) return;
       els.expertImporter.value = state.selected.expert_importer || 'Procesos';
@@ -1262,6 +1347,20 @@
       }
     }
 
+    async function clearItemRecognition(itemId) {
+      if (!state.selectedId) return;
+      if (!window.confirm('确认清除这条数据的识别状态？')) return;
+      try {
+        const payload = await request(`/datasets/${state.selectedId}/items/${itemId}/clear-recognition`, { method: 'POST' });
+        state.selected = payload.dataset;
+        renderSelectedDataset();
+        await loadDatasets(state.selectedId);
+        setMessage(els.detailMessage, '已清除识别状态', 'success');
+      } catch (error) {
+        showError(els.detailMessage, error);
+      }
+    }
+
     function startOrStopPolling() {
       if (state.pollTimer) {
         clearInterval(state.pollTimer);
@@ -1299,8 +1398,65 @@
       return Number.isInteger(number) ? String(number) : number.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
     }
 
+    function dimensionPair(source, pairs) {
+      const data = source || {};
+      for (const [firstKey, secondKey] of pairs) {
+        const first = data[firstKey];
+        const second = data[secondKey];
+        if (first !== null && first !== undefined && first !== '' && second !== null && second !== undefined && second !== '') {
+          return `${formatNumber(first)} x ${formatNumber(second)} mm`;
+        }
+      }
+      return '';
+    }
+
     function basename(value) {
       return String(value || '').split(/[\\/]/).filter(Boolean).pop() || '';
+    }
+
+    function iconSvg(name) {
+      const icons = {
+        refresh: '<path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/>',
+        plus: '<path d="M12 5v14"/><path d="M5 12h14"/>',
+        upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5"/><path d="M12 3v12"/>',
+        download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/>',
+        play: '<path d="M5 5v14l14-7Z"/>',
+        settings: '<path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.36a1.7 1.7 0 0 0-1 .64 1.7 1.7 0 0 0-.4 1.1V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 8.6 19.36a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.24 15a1.7 1.7 0 0 0-.64-1A1.7 1.7 0 0 0 2.5 13H2a2 2 0 1 1 0-4h.5a1.7 1.7 0 0 0 1.74-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06A2 2 0 1 1 6.67 3.24l.06.06A1.7 1.7 0 0 0 8.6 3.64 1.7 1.7 0 0 0 9.6 2.1V2a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.54 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.76 8c.14.38.37.72.64 1H22a2 2 0 1 1 0 4h-.5a1.7 1.7 0 0 0-1.1 2Z"/>',
+        copy: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+        trash: '<path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>',
+        edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
+        file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/>',
+        image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/>',
+        code: '<path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/>',
+        rotate: '<path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 3v6h6"/>',
+        save: '<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/>',
+        x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+      };
+      return `<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[name] || ''}</svg>`;
+    }
+
+    function setButtonIcon(element, iconName) {
+      if (!element || element.querySelector('.icon-svg')) return;
+      element.insertAdjacentHTML('afterbegin', iconSvg(iconName));
+    }
+
+    function decorateStaticButtons() {
+      setButtonIcon(els.refreshBtn, 'refresh');
+      setButtonIcon(els.openCreateDatasetBtn, 'plus');
+      setButtonIcon(els.uploadExcelBtn, 'upload');
+      setButtonIcon(els.downloadTemplateBtn, 'download');
+      setButtonIcon(els.openItemBtn, 'plus');
+      setButtonIcon(els.recognizeDatasetBtn, 'play');
+      setButtonIcon(els.clearDatasetRecognitionBtn, 'rotate');
+      setButtonIcon(els.importSettingsBtn, 'settings');
+      setButtonIcon(els.importExpertBtn, 'upload');
+      setButtonIcon(els.copyDatasetBtn, 'copy');
+      setButtonIcon(els.downloadDxfBtn, 'download');
+      setButtonIcon(els.deleteDatasetBtn, 'trash');
+      setButtonIcon(els.saveItemBtn, 'save');
+      setButtonIcon(document.querySelector('#createDatasetForm button[type="submit"]'), 'plus');
+      setButtonIcon(document.querySelector('#importSettingsForm button[type="submit"]'), 'save');
+      document.querySelectorAll('[data-close-modal]:not(.btn-close)').forEach(button => setButtonIcon(button, 'x'));
     }
 
     function escapeHtml(value) {
@@ -1331,6 +1487,7 @@
     els.copyDatasetBtn.addEventListener('click', copySelectedDataset);
     els.deleteDatasetBtn.addEventListener('click', deleteSelectedDataset);
     els.recognizeDatasetBtn.addEventListener('click', recognizeSelectedDataset);
+    els.clearDatasetRecognitionBtn.addEventListener('click', clearSelectedDatasetRecognition);
     els.downloadDxfBtn.addEventListener('click', () => {
       if (!state.selectedId) return;
       downloadFile(`/datasets/${state.selectedId}/download-dxf`, `${state.selected.name}_dxf.zip`).catch(error => showError(els.detailMessage, error));
@@ -1346,6 +1503,9 @@
       }
       if (button.dataset.action === 'delete') {
         deleteItem(button.dataset.id);
+      }
+      if (button.dataset.action === 'clear-recognition') {
+        clearItemRecognition(button.dataset.id);
       }
     });
     document.addEventListener('click', (event) => {
@@ -1363,6 +1523,7 @@
       }
     });
 
+    decorateStaticButtons();
     loadDatasets();
   </script>
 </body>

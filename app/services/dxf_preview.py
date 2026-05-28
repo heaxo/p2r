@@ -82,7 +82,7 @@ def _read_supported_entities(path: Path) -> List[Dict[str, Any]]:
             if current:
                 entities.append(current)
 
-            if value in {"LINE", "ARC", "CIRCLE", "LWPOLYLINE"}:
+            if value in {"LINE", "ARC", "CIRCLE", "ELLIPSE", "LWPOLYLINE"}:
                 current = {"type": value, "raw": []}
             else:
                 current = None
@@ -123,6 +123,30 @@ def _entities_to_polylines(entities: List[Dict[str, Any]]) -> List[np.ndarray]:
                     center[1] + np.sin(angles) * radius,
                 ])
                 polylines.append(pts.astype(np.float64))
+
+        elif entity_type == "ELLIPSE":
+            values = _first_values(raw)
+            if {"10", "20", "11", "21", "40"} <= values.keys():
+                center = np.asarray([values["10"], values["20"]], dtype=np.float64)
+                major = np.asarray([values["11"], values["21"]], dtype=np.float64)
+                major_len = float(np.linalg.norm(major))
+                ratio = float(values["40"])
+                if major_len > 1e-9 and ratio > 0:
+                    start = float(values.get("41", 0.0))
+                    end = float(values.get("42", 2.0 * math.pi))
+                    if end <= start:
+                        end += 2.0 * math.pi
+                    unit_major = major / major_len
+                    unit_minor = np.asarray([-unit_major[1], unit_major[0]], dtype=np.float64)
+                    minor_len = major_len * ratio
+                    steps = max(96, int(abs(end - start) / (math.pi / 180.0)))
+                    angles = np.linspace(start, end, steps)
+                    pts = (
+                        center
+                        + np.outer(np.cos(angles) * major_len, unit_major)
+                        + np.outer(np.sin(angles) * minor_len, unit_minor)
+                    )
+                    polylines.append(pts.astype(np.float64))
 
         elif entity_type == "ARC":
             values = _first_values(raw)

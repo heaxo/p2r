@@ -2189,6 +2189,96 @@ def fit_circle_mm(points_mm: np.ndarray) -> dict:
     }
 
 
+def fit_circle_px(points_px: np.ndarray) -> dict:
+    pts = np.asarray(points_px, dtype=np.float32).reshape(-1, 2)
+
+    x = pts[:, 0]
+    y = pts[:, 1]
+
+    A = np.column_stack([2 * x, 2 * y, np.ones_like(x)])
+    b = x * x + y * y
+
+    cx, cy, c = np.linalg.lstsq(A, b, rcond=None)[0]
+    radius = float(np.sqrt(max(0.0, float(c + cx * cx + cy * cy))))
+    diameter = radius * 2.0
+
+    dists = np.sqrt((x - cx) ** 2 + (y - cy) ** 2)
+    radius_std = float(np.std(dists))
+    max_radius_error = float(np.max(np.abs(dists - radius)))
+    radius_error_ratio = radius_std / max(radius, 1e-6)
+
+    area = float(abs(cv2.contourArea(pts.reshape(-1, 1, 2))))
+    perimeter = float(cv2.arcLength(pts.reshape(-1, 1, 2), True))
+    circularity = 4.0 * np.pi * area / max(perimeter * perimeter, 1e-6)
+
+    x_min, y_min = np.min(pts, axis=0)
+    x_max, y_max = np.max(pts, axis=0)
+    bbox_w = float(x_max - x_min)
+    bbox_h = float(y_max - y_min)
+    bbox_diameter_error = max(abs(bbox_w - diameter), abs(bbox_h - diameter))
+
+    raw_angles = np.mod(np.arctan2(y - cy, x - cx), 2.0 * np.pi)
+    sorted_angles = np.sort(raw_angles)
+    gaps = np.diff(np.concatenate([sorted_angles, sorted_angles[:1] + 2.0 * np.pi]))
+    max_angle_gap_deg = float(np.degrees(np.max(gaps))) if len(gaps) else 360.0
+
+    max_allowed_radius_error = max(3.0, radius * 0.05)
+    max_allowed_bbox_error = max(4.0, diameter * 0.06)
+
+    return {
+        "center_x_px": float(cx),
+        "center_y_px": float(cy),
+        "radius_px": radius,
+        "diameter_px": diameter,
+        "circularity": float(circularity),
+        "max_radius_error_px": float(max_radius_error),
+        "radius_error_ratio": float(radius_error_ratio),
+        "bbox_diameter_error_px": float(bbox_diameter_error),
+        "max_angle_gap_deg": float(max_angle_gap_deg),
+        "is_circle_like": (
+            circularity >= 0.90
+            and radius_error_ratio <= 0.04
+            and max_radius_error <= max_allowed_radius_error
+            and bbox_diameter_error <= max_allowed_bbox_error
+            and max_angle_gap_deg <= 75.0
+        ),
+    }
+
+
+def make_circle_info_from_mm_bbox(points_mm: np.ndarray, pixel_circle_info: dict | None = None) -> dict:
+    pts = np.asarray(points_mm, dtype=np.float32).reshape(-1, 2)
+    min_xy = np.min(pts, axis=0)
+    max_xy = np.max(pts, axis=0)
+    bbox_w = float(max_xy[0] - min_xy[0])
+    bbox_h = float(max_xy[1] - min_xy[1])
+    diameter = max(1.0, (bbox_w + bbox_h) / 2.0)
+    radius = diameter / 2.0
+    cx = float((min_xy[0] + max_xy[0]) / 2.0)
+    cy = float((min_xy[1] + max_xy[1]) / 2.0)
+    area = float(abs(cv2.contourArea(pts.reshape(-1, 1, 2))))
+    perimeter = float(cv2.arcLength(pts.reshape(-1, 1, 2), True))
+    circularity = 4.0 * np.pi * area / max(perimeter * perimeter, 1e-6)
+    bbox_ratio = max(bbox_w, bbox_h) / max(1e-6, min(bbox_w, bbox_h))
+
+    return {
+        "center_x": cx,
+        "center_y": cy,
+        "radius": radius,
+        "diameter": diameter,
+        "circularity": float(circularity),
+        "max_radius_error_mm": 0.0,
+        "radius_error_ratio": 0.0,
+        "bbox_diameter_error_mm": abs(bbox_w - bbox_h),
+        "max_angle_gap_deg": 0.0,
+        "is_circle_like": True,
+        "circle_source": "pixel_circle_bbox_mm_fallback",
+        "bbox_width_mm": bbox_w,
+        "bbox_height_mm": bbox_h,
+        "bbox_aspect_ratio": float(bbox_ratio),
+        "pixel_circle_info": json_safe(pixel_circle_info or {}),
+    }
+
+
 def write_circle_dxf(output_path: str | Path, circle: dict, offset_to_positive: bool = True) -> Dict[str, Any]:
     cx = float(circle["center_x"])
     cy = float(circle["center_y"])
@@ -2248,6 +2338,236 @@ def write_circle_dxf(output_path: str | Path, circle: dict, offset_to_positive: 
             }
         ],
     }
+
+
+def write_ellipse_dxf(
+    output_path: str | Path,
+    *,
+    center_x: float,
+    center_y: float,
+    radius_x: float,
+    radius_y: float,
+    angle_deg: float = 0.0,
+    offset_to_positive: bool = True,
+) -> Dict[str, Any]:
+    cx = float(center_x)
+    cy = float(center_y)
+    rx = max(1e-6, float(radius_x))
+    ry = max(1e-6, float(radius_y))
+    angle = math.radians(float(angle_deg))
+
+    offset_x = 0.0
+    offset_y = 0.0
+    if offset_to_positive:
+        offset_x = max(0.0, -(cx - rx) + 10.0)
+        offset_y = max(0.0, -(cy - ry) + 10.0)
+
+    cx += offset_x
+    cy += offset_y
+
+    if rx >= ry:
+        major_radius = rx
+        minor_radius = ry
+        major_angle = angle
+        ratio = ry / rx
+    else:
+        major_radius = ry
+        minor_radius = rx
+        major_angle = angle + math.pi / 2.0
+        ratio = rx / ry
+    major_x = math.cos(major_angle) * major_radius
+    major_y = math.sin(major_angle) * major_radius
+
+    lines = [
+        "0", "SECTION",
+        "2", "HEADER",
+        "9", "$INSUNITS",
+        "70", "4",
+        "0", "ENDSEC",
+        "0", "SECTION",
+        "2", "ENTITIES",
+        "0", "ELLIPSE",
+        "8", "PLATE_OUTER",
+        "10", f"{cx:.6f}",
+        "20", f"{cy:.6f}",
+        "30", "0.0",
+        "11", f"{major_x:.6f}",
+        "21", f"{major_y:.6f}",
+        "31", "0.0",
+        "40", f"{ratio:.9f}",
+        "41", "0.0",
+        "42", f"{2.0 * np.pi:.9f}",
+        "0", "ENDSEC",
+        "0", "EOF",
+    ]
+
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+    return {
+        "enabled": True,
+        "mode": "ellipse_override",
+        "input_points": None,
+        "entity_count": 1,
+        "entity_type_counts": {"ELLIPSE": 1},
+        "max_fit_error_mm": 0.0,
+        "offset_x_mm": round(float(offset_x), 6),
+        "offset_y_mm": round(float(offset_y), 6),
+        "path": str(path),
+        "entities": [
+            {
+                "type": "ELLIPSE",
+                "center": [round(float(center_x), 6), round(float(center_y), 6)],
+                "radius_x": round(float(rx), 6),
+                "radius_y": round(float(ry), 6),
+                "diameter_x": round(float(rx * 2.0), 6),
+                "diameter_y": round(float(ry * 2.0), 6),
+                "ratio": round(float(ratio), 9),
+                "angle_deg": round(float(angle_deg), 6),
+            }
+        ],
+    }
+
+
+def fit_ellipse_like_mm(points_mm: np.ndarray, pixel_circle_info: dict | None = None) -> dict:
+    pts = np.asarray(points_mm, dtype=np.float32).reshape(-1, 2)
+    if len(pts) < 5:
+        return {"is_ellipse_like": False, "reason": "too_few_points"}
+
+    contour = pts.reshape(-1, 1, 2)
+    try:
+        (cx, cy), (axis_1, axis_2), angle_deg = cv2.fitEllipse(contour)
+    except cv2.error as exc:
+        return {"is_ellipse_like": False, "reason": f"fit_ellipse_failed:{exc}"}
+
+    major_diameter = max(float(axis_1), float(axis_2))
+    minor_diameter = min(float(axis_1), float(axis_2))
+    if major_diameter <= 1e-6 or minor_diameter <= 1e-6:
+        return {"is_ellipse_like": False, "reason": "invalid_axes"}
+
+    if float(axis_2) > float(axis_1):
+        major_angle_deg = float(angle_deg) + 90.0
+    else:
+        major_angle_deg = float(angle_deg)
+    major_angle_rad = math.radians(major_angle_deg)
+    major_unit = np.array([math.cos(major_angle_rad), math.sin(major_angle_rad)], dtype=np.float32)
+    minor_unit = np.array([-major_unit[1], major_unit[0]], dtype=np.float32)
+    center = np.array([float(cx), float(cy)], dtype=np.float32)
+    rel = pts - center
+    major_r = major_diameter / 2.0
+    minor_r = minor_diameter / 2.0
+    u = rel @ major_unit
+    v = rel @ minor_unit
+    normalized_radius = np.sqrt((u / major_r) ** 2 + (v / minor_r) ** 2)
+    radial_std = float(np.std(normalized_radius))
+    radial_p95 = float(np.percentile(np.abs(normalized_radius - 1.0), 95.0))
+
+    area = float(abs(cv2.contourArea(contour)))
+    perimeter = float(cv2.arcLength(contour, True))
+    ellipse_area = float(np.pi * major_r * minor_r)
+    area_ratio = area / max(ellipse_area, 1e-6)
+    circularity = 4.0 * np.pi * area / max(perimeter * perimeter, 1e-6)
+    aspect_ratio = major_diameter / max(minor_diameter, 1e-6)
+    pixel_circle = bool((pixel_circle_info or {}).get("is_circle_like"))
+
+    is_ellipse_like = (
+        0.72 <= area_ratio <= 1.18
+        and aspect_ratio <= 3.0
+        and circularity >= 0.45
+        and (
+            radial_std <= 0.11
+            or (pixel_circle and radial_std <= 0.18 and radial_p95 <= 0.38)
+        )
+    )
+
+    return {
+        "is_ellipse_like": bool(is_ellipse_like),
+        "center_x": float(cx),
+        "center_y": float(cy),
+        "major_diameter": major_diameter,
+        "minor_diameter": minor_diameter,
+        "major_radius": major_r,
+        "minor_radius": minor_r,
+        "major_angle_deg": float(major_angle_deg % 180.0),
+        "aspect_ratio": float(aspect_ratio),
+        "area_ratio": float(area_ratio),
+        "circularity": float(circularity),
+        "radial_std": float(radial_std),
+        "radial_p95_abs_error": float(radial_p95),
+        "pixel_circle": pixel_circle,
+    }
+
+
+def write_circle_or_ellipse_dxf_from_fit(
+    output_path: str | Path,
+    ellipse_info: dict,
+    *,
+    offset_to_positive: bool = True,
+) -> Dict[str, Any]:
+    major_r = float(ellipse_info["major_radius"])
+    minor_r = float(ellipse_info["minor_radius"])
+    if max(major_r, minor_r) / max(1e-6, min(major_r, minor_r)) <= 1.015:
+        diameter = (major_r + minor_r)
+        circle = {
+            "center_x": float(ellipse_info["center_x"]),
+            "center_y": float(ellipse_info["center_y"]),
+            "radius": diameter / 2.0,
+            "diameter": diameter,
+            "max_radius_error_mm": 0.0,
+            "circularity": float(ellipse_info.get("circularity") or 0.0),
+            "radius_error_ratio": float(ellipse_info.get("radial_std") or 0.0),
+            "bbox_diameter_error_mm": abs(major_r - minor_r) * 2.0,
+        }
+        return write_circle_dxf(output_path, circle, offset_to_positive=offset_to_positive)
+
+    angle = float(ellipse_info.get("major_angle_deg") or 0.0)
+    return write_ellipse_dxf(
+        output_path,
+        center_x=float(ellipse_info["center_x"]),
+        center_y=float(ellipse_info["center_y"]),
+        radius_x=major_r,
+        radius_y=minor_r,
+        angle_deg=angle,
+        offset_to_positive=offset_to_positive,
+    )
+
+
+def write_circle_or_ellipse_dxf_from_bbox(
+    output_path: str | Path,
+    points_mm: np.ndarray,
+    *,
+    circle_info: dict | None = None,
+    offset_to_positive: bool = True,
+) -> Dict[str, Any]:
+    pts = np.asarray(points_mm, dtype=np.float32).reshape(-1, 2)
+    min_xy = np.min(pts, axis=0)
+    max_xy = np.max(pts, axis=0)
+    width = max(1.0, float(max_xy[0] - min_xy[0]))
+    height = max(1.0, float(max_xy[1] - min_xy[1]))
+    center_x = float((min_xy[0] + max_xy[0]) / 2.0)
+    center_y = float((min_xy[1] + max_xy[1]) / 2.0)
+    ratio = max(width, height) / max(1e-6, min(width, height))
+
+    if ratio <= 1.015:
+        diameter = (width + height) / 2.0
+        circle = dict(circle_info or {})
+        circle.update({
+            "center_x": center_x,
+            "center_y": center_y,
+            "radius": diameter / 2.0,
+            "diameter": diameter,
+        })
+        return write_circle_dxf(output_path, circle, offset_to_positive=offset_to_positive)
+
+    return write_ellipse_dxf(
+        output_path,
+        center_x=center_x,
+        center_y=center_y,
+        radius_x=width / 2.0,
+        radius_y=height / 2.0,
+        offset_to_positive=offset_to_positive,
+    )
 
 
 
@@ -2434,6 +2754,7 @@ def process_one_image(args) -> Dict[str, Any]:
         raise RuntimeError("未能从最终 plate mask 中提取钢板外轮廓")
 
     plate_contour_px = plate_outer_contour.reshape(-1, 2).astype(np.float32)
+    pixel_circle_info = fit_circle_px(plate_contour_px)
 
     H_a4, a4_paper_quad_mm, a4_size, used_orientation = build_a4_homography(
         paper_quad_px,
@@ -2488,6 +2809,20 @@ def process_one_image(args) -> Dict[str, Any]:
     # 先用原始mm轮廓判断是否接近圆形。
     # 注意：圆形检测必须放在 simplify_contour_mm 和 DXF后处理之前。
     circle_info = fit_circle_mm(plate_contour_mm_raw)
+    if not circle_info["is_circle_like"] and pixel_circle_info.get("is_circle_like"):
+        mm_min_xy = np.min(plate_contour_mm_raw, axis=0)
+        mm_max_xy = np.max(plate_contour_mm_raw, axis=0)
+        mm_bbox_w = float(mm_max_xy[0] - mm_min_xy[0])
+        mm_bbox_h = float(mm_max_xy[1] - mm_min_xy[1])
+        mm_bbox_ratio = max(mm_bbox_w, mm_bbox_h) / max(1e-6, min(mm_bbox_w, mm_bbox_h))
+        if mm_bbox_ratio <= 1.12:
+            circle_info = make_circle_info_from_mm_bbox(plate_contour_mm_raw, pixel_circle_info)
+            logger.info(
+                "Circle-like plate recovered from pixel contour: diameter_mm={:.2f}, mm_bbox_ratio={:.4f}, pixel_circularity={:.4f}",
+                float(circle_info["diameter"]),
+                mm_bbox_ratio,
+                float(pixel_circle_info.get("circularity") or 0.0),
+            )
 
     dxf_path = run_dir / "plate_outer.dxf"
     dxf_geometry_info: Dict[str, Any] = {}
@@ -2545,21 +2880,18 @@ def process_one_image(args) -> Dict[str, Any]:
         if dxf_target_size_info.get("enabled"):
             dims = calc_dimensions(plate_contour_mm)
             dims["source_circle_mode"] = True
-            dims["dxf_target_size"] = dxf_target_size_info
-            dxf_geometry_info = write_simple_dxf(
-                dxf_path,
-                plate_contour_mm,
-                offset_to_positive=True,
-            )
         else:
             dims = dict(detected_plate_dimensions)
-            dims["dxf_target_size"] = dxf_target_size_info
-            # 圆形钢板直接写 DXF CIRCLE，不走折线和后处理。
-            dxf_geometry_info = write_circle_dxf(
-                dxf_path,
-                circle_info,
-                offset_to_positive=True,
-            )
+        dims["dxf_target_size"] = dxf_target_size_info
+
+        # 圆/椭圆类钢板必须直接写 CIRCLE/ELLIPSE 实体，不能进入普通折线/圆弧后处理。
+        # 透视或目标尺寸非等比缩放可能把圆形轮廓变成椭圆，但不应把它简化成多边形。
+        dxf_geometry_info = write_circle_or_ellipse_dxf_from_bbox(
+            dxf_path,
+            plate_contour_mm,
+            circle_info=circle_info,
+            offset_to_positive=True,
+        )
 
         dxf_postprocess_info = {
             "enabled": False,
@@ -2628,11 +2960,27 @@ def process_one_image(args) -> Dict[str, Any]:
         dims = calc_dimensions(plate_contour_mm)
         dims["dxf_target_size"] = dxf_target_size_info
 
-        dxf_geometry_info = write_simple_dxf(
-            dxf_path,
-            plate_contour_mm,
-            offset_to_positive=True,
-        )
+        final_ellipse_info = fit_ellipse_like_mm(plate_contour_mm, pixel_circle_info)
+        if final_ellipse_info.get("is_ellipse_like"):
+            dxf_geometry_info = write_circle_or_ellipse_dxf_from_fit(
+                dxf_path,
+                final_ellipse_info,
+                offset_to_positive=True,
+            )
+            dxf_postprocess_info["ellipse_override"] = json_safe(final_ellipse_info)
+            dxf_postprocess_info["final_dxf_reason"] = "postprocessed_contour_written_as_circle_or_ellipse"
+            dims["ellipse_mode"] = True
+            dims["ellipse_major_diameter_mm"] = round(float(final_ellipse_info["major_diameter"]), 2)
+            dims["ellipse_minor_diameter_mm"] = round(float(final_ellipse_info["minor_diameter"]), 2)
+            dims["ellipse_angle_deg"] = round(float(final_ellipse_info["major_angle_deg"]), 2)
+        else:
+            dxf_geometry_info = write_simple_dxf(
+                dxf_path,
+                plate_contour_mm,
+                offset_to_positive=True,
+            )
+            dxf_postprocess_info["ellipse_override"] = json_safe(final_ellipse_info)
+            dxf_postprocess_info["final_dxf_reason"] = "postprocessed_contour_written_as_polyline_entities"
         logger.info(
             "DXF written: {}, entities={}",
             dxf_path,

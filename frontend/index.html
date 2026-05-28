@@ -359,6 +359,16 @@
       min-height: 34px;
     }
 
+    button .icon-svg,
+    .link-btn .icon-svg,
+    .btn-small .icon-svg {
+      width: 14px;
+      height: 14px;
+      margin-right: 5px;
+      vertical-align: -2px;
+      stroke-width: 2.2;
+    }
+
     button:disabled {
       opacity: .58;
       cursor: not-allowed;
@@ -998,7 +1008,8 @@
       fd.append('yolo_input_mode', 'canonical_path');
       fd.append('plate_class', 'plate');
       fd.append('paper_class', 'paper');
-      fd.append('paper_source', 'yolo');
+      // fd.append('paper_source', 'yolo');
+      fd.append('paper_source', 'sam2');
       fd.append('paper_sam2_yolo_fallback', 'false');
       fd.append('a4_orientation', 'auto');
       fd.append('perspective_source', 'a4');
@@ -1008,7 +1019,8 @@
       fd.append('topdown_padding_mm', '50.0');
       fd.append('imgsz', '1280');
       fd.append('conf', '0.35');
-      fd.append('sam_model', 'sam2');
+      // fd.append('sam_model', 'sam2');
+      fd.append('sam_model', 'sam2:small');
       fd.append('dxf_postprocess_enabled', 'true');
       fd.append('dxf_notch_fill_enabled', 'false');
       fd.append('per_file_options', JSON.stringify(selectedFiles.map(item => {
@@ -1055,12 +1067,36 @@
       ));
     }
 
+    function iconSvg(name) {
+      const icons = {
+        upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5"/><path d="M12 3v12"/>',
+        trash: '<path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>',
+        download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/>',
+        refresh: '<path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/>',
+        eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>',
+        file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/>',
+      };
+      return `<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[name] || ''}</svg>`;
+    }
+
+    function setButtonLabel(button, iconName, text) {
+      button.innerHTML = `${iconSvg(iconName)}${escapeHtml(text)}`;
+    }
+
+    function decorateStaticButtons() {
+      setButtonLabel(submitBtn, 'upload', '上传并识别');
+      setButtonLabel(clearBtn, 'trash', '清除列表');
+      setButtonLabel(refreshBtn, 'refresh', '刷新');
+      setButtonLabel(downloadDxfBtn, 'download', '批量下载DXF');
+    }
+
     function updateDownloadDxfButton() {
       const count = completedDxfTasks().length;
       downloadDxfBtn.disabled = isDownloadingDxf || count === 0;
-      downloadDxfBtn.textContent = isDownloadingDxf
+      const label = isDownloadingDxf
         ? '打包中'
         : (count > 0 ? `下载DXF(${count})` : '批量下载DXF');
+      setButtonLabel(downloadDxfBtn, 'download', label);
       downloadDxfBtn.title = count > 0 ? `下载当前列表中 ${count} 个已完成 DXF` : '暂无可下载的 DXF';
     }
 
@@ -1262,8 +1298,8 @@
               <div class="subtext">${escapeHtml(task.dxf_geometry && task.dxf_geometry.entity_count ? `实体 ${task.dxf_geometry.entity_count}` : '')}</div>
             </td>
             <td>
-              <button class="btn-small" type="button" data-action="preview" data-id="${escapeHtml(task.id)}">预览</button>
-              ${dxfUrl ? `<a class="btn-small" href="${escapeHtml(dxfUrl)}" download>DXF</a>` : ''}
+              <button class="btn-small" type="button" data-action="preview" data-id="${escapeHtml(task.id)}">${iconSvg('eye')}预览</button>
+              ${dxfUrl ? `<a class="btn-small" href="${escapeHtml(dxfUrl)}" download>${iconSvg('file')}DXF</a>` : ''}
             </td>
           </tr>
         `;
@@ -1468,7 +1504,7 @@
     uploadForm.addEventListener('submit', async event => {
       event.preventDefault();
       submitBtn.disabled = true;
-      submitBtn.textContent = '上传中';
+      setButtonLabel(submitBtn, 'upload', '上传中');
       setStatus('正在上传并创建任务...');
 
       try {
@@ -1490,7 +1526,7 @@
         setStatus(`上传失败：${error.message || error}`, 'error');
       } finally {
         submitBtn.disabled = false;
-        submitBtn.textContent = '上传并识别';
+        setButtonLabel(submitBtn, 'upload', '上传并识别');
       }
     });
 
@@ -1534,6 +1570,7 @@
       detailOpenByTask[target.dataset.taskDetail] = target.open;
     }, true);
 
+    decorateStaticButtons();
     renderSelectedFiles();
     updateDownloadDxfButton();
     loadTasks(true);

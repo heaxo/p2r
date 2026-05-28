@@ -101,6 +101,7 @@ def _dataset_item_fields(
     dxf_target_size_2_mm: float | None,
     dxf_target_x_mm: float | None,
     dxf_target_y_mm: float | None,
+    paper_source: str | None,
     use_plate_perspective: bool,
     dxf_notch_fill_enabled: bool,
     dxf_notch_fill_max_width_mm: float | None,
@@ -115,6 +116,7 @@ def _dataset_item_fields(
         "dxf_target_size_2_mm": dxf_target_size_2_mm,
         "dxf_target_x_mm": dxf_target_x_mm,
         "dxf_target_y_mm": dxf_target_y_mm,
+        "paper_source": paper_source,
         "use_plate_perspective": use_plate_perspective,
         "dxf_notch_fill_enabled": dxf_notch_fill_enabled,
         "dxf_notch_fill_max_width_mm": dxf_notch_fill_max_width_mm,
@@ -221,6 +223,16 @@ async def recognize_dataset(dataset_id: str) -> dict:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
+@router.post("/datasets/{dataset_id}/clear-recognition", dependencies=[Depends(require_token)])
+async def clear_dataset_recognition(dataset_id: str) -> dict:
+    try:
+        return {"ok": True, "dataset": dataset_service.clear_dataset_recognition(dataset_id)}
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据集不存在") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
 @router.post("/datasets/{dataset_id}/import-expert", dependencies=[Depends(require_token)])
 async def import_dataset_to_expert(dataset_id: str) -> dict:
     try:
@@ -261,6 +273,7 @@ async def add_dataset_item(
     dxf_target_size_2_mm: Annotated[float | None, Form(description="尺寸2 mm")] = None,
     dxf_target_x_mm: Annotated[float | None, Form(description="X mm")] = None,
     dxf_target_y_mm: Annotated[float | None, Form(description="Y mm")] = None,
+    paper_source: Annotated[str | None, Form(description="A4纸识别")] = None,
     use_plate_perspective: Annotated[bool, Form(description="是否启用钢板透视")] = False,
     dxf_notch_fill_enabled: Annotated[bool, Form(description="是否启用夹钳修复")] = False,
     dxf_notch_fill_max_width_mm: Annotated[float | None, Form(description="夹钳修复最大宽度 mm")] = 80.0,
@@ -279,6 +292,7 @@ async def add_dataset_item(
                 dxf_target_size_2_mm=dxf_target_size_2_mm,
                 dxf_target_x_mm=dxf_target_x_mm,
                 dxf_target_y_mm=dxf_target_y_mm,
+                paper_source=paper_source,
                 use_plate_perspective=use_plate_perspective,
                 dxf_notch_fill_enabled=dxf_notch_fill_enabled,
                 dxf_notch_fill_max_width_mm=dxf_notch_fill_max_width_mm,
@@ -305,6 +319,7 @@ async def update_dataset_item(
     dxf_target_size_2_mm: Annotated[float | None, Form(description="尺寸2 mm")] = None,
     dxf_target_x_mm: Annotated[float | None, Form(description="X mm")] = None,
     dxf_target_y_mm: Annotated[float | None, Form(description="Y mm")] = None,
+    paper_source: Annotated[str | None, Form(description="A4纸识别")] = None,
     use_plate_perspective: Annotated[bool, Form(description="是否启用钢板透视")] = False,
     dxf_notch_fill_enabled: Annotated[bool, Form(description="是否启用夹钳修复")] = False,
     dxf_notch_fill_max_width_mm: Annotated[float | None, Form(description="夹钳修复最大宽度 mm")] = 80.0,
@@ -324,6 +339,7 @@ async def update_dataset_item(
                 dxf_target_size_2_mm=dxf_target_size_2_mm,
                 dxf_target_x_mm=dxf_target_x_mm,
                 dxf_target_y_mm=dxf_target_y_mm,
+                paper_source=paper_source,
                 use_plate_perspective=use_plate_perspective,
                 dxf_notch_fill_enabled=dxf_notch_fill_enabled,
                 dxf_notch_fill_max_width_mm=dxf_notch_fill_max_width_mm,
@@ -344,6 +360,16 @@ async def delete_dataset_item(dataset_id: str, item_id: str) -> dict:
         return {"ok": True, "dataset": dataset_service.get_dataset_detail(dataset_id)}
     except KeyError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据不存在") from exc
+
+
+@router.post("/datasets/{dataset_id}/items/{item_id}/clear-recognition", dependencies=[Depends(require_token)])
+async def clear_dataset_item_recognition(dataset_id: str, item_id: str) -> dict:
+    try:
+        return {"ok": True, "dataset": dataset_service.clear_item_recognition(dataset_id, item_id)}
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据不存在") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.post("/tasks/upload", dependencies=[Depends(require_token)])

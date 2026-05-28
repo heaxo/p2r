@@ -150,6 +150,24 @@ class DatasetService:
         self._require_dataset(dataset_id)
         self.store.delete_item(item_id, dataset_id)
 
+    def clear_item_recognition(self, dataset_id: str, item_id: str) -> Dict[str, Any]:
+        dataset = self._require_dataset(dataset_id)
+        if dataset.get("status") == "recognizing":
+            raise ValueError("数据集正在识别中，不能清除识别状态")
+
+        cleared = self.store.clear_item_recognition(item_id, dataset_id)
+        if not cleared:
+            raise ValueError("只有已识别的数据可以清除识别状态")
+        return self.get_dataset_detail(dataset_id)
+
+    def clear_dataset_recognition(self, dataset_id: str) -> Dict[str, Any]:
+        dataset = self._require_dataset(dataset_id)
+        if dataset.get("status") == "recognizing":
+            raise ValueError("数据集正在识别中，不能清除识别状态")
+
+        self.store.clear_dataset_recognition(dataset_id)
+        return self.get_dataset_detail(dataset_id)
+
     def delete_dataset(self, dataset_id: str) -> None:
         dataset = self._require_dataset(dataset_id)
         if dataset.get("status") == "recognizing":
@@ -200,6 +218,7 @@ class DatasetService:
                 dxf_target_size_2_mm=item.get("dxf_target_size_2_mm"),
                 dxf_target_x_mm=item.get("dxf_target_x_mm"),
                 dxf_target_y_mm=item.get("dxf_target_y_mm"),
+                paper_source=item.get("paper_source") or "yolo",
                 use_plate_perspective=bool(item.get("use_plate_perspective")),
                 dxf_notch_fill_enabled=bool(item.get("dxf_notch_fill_enabled")),
                 dxf_notch_fill_max_width_mm=item.get("dxf_notch_fill_max_width_mm"),
@@ -215,9 +234,9 @@ class DatasetService:
         if dataset.get("status") == "recognizing":
             raise ValueError("数据集正在识别中")
 
-        self.store.begin_recognition(dataset_id)
+        queued_count = self.store.begin_recognition(dataset_id)
         self._executor.submit(self._run_dataset, dataset_id)
-        logger.info("Dataset recognition queued: id={}, name={}", dataset_id, dataset.get("name"))
+        logger.info("Dataset recognition queued: id={}, name={}, queued_count={}", dataset_id, dataset.get("name"), queued_count)
         return self.get_dataset_detail(dataset_id)
 
     def _run_dataset(self, dataset_id: str) -> None:
@@ -225,6 +244,9 @@ class DatasetService:
         last_error = None
         items = self.store.list_items(dataset_id)
         for item in items:
+            if item.get("status") != "queued":
+                continue
+
             item_id = item["id"]
             try:
                 image_path = Path(str(item.get("image_path") or ""))
@@ -248,7 +270,7 @@ class DatasetService:
                     plate_class="plate",
                     paper_class="paper",
                     user_point_ratio=None,
-                    paper_source="yolo",
+                    paper_source=self._normalize_paper_source(item.get("paper_source")),
                     paper_sam2_yolo_fallback=False,
                     a4_orientation="auto",
                     perspective_source="plate" if bool(item.get("use_plate_perspective")) else "a4",
@@ -685,6 +707,7 @@ class DatasetService:
             "dxf_target_size_2_mm": size_2,
             "dxf_target_x_mm": self._optional_positive_float(fields.get("dxf_target_x_mm"), "x"),
             "dxf_target_y_mm": self._optional_positive_float(fields.get("dxf_target_y_mm"), "y"),
+            "paper_source": self._normalize_paper_source(fields.get("paper_source")),
             "use_plate_perspective": self._parse_bool(fields.get("use_plate_perspective")),
             "dxf_notch_fill_enabled": self._parse_bool(fields.get("dxf_notch_fill_enabled")),
             "dxf_notch_fill_max_width_mm": self._optional_positive_float(
@@ -749,6 +772,7 @@ class DatasetService:
             "dxf_target_size_2_mm": row.get("dxf_target_size_2_mm"),
             "dxf_target_x_mm": row.get("dxf_target_x_mm"),
             "dxf_target_y_mm": row.get("dxf_target_y_mm"),
+            "paper_source": self._normalize_paper_source(row.get("paper_source")),
             "use_plate_perspective": bool(row.get("use_plate_perspective")),
             "dxf_notch_fill_enabled": bool(row.get("dxf_notch_fill_enabled")),
             "dxf_notch_fill_max_width_mm": row.get("dxf_notch_fill_max_width_mm"),
@@ -952,6 +976,16 @@ class DatasetService:
         if not text:
             return False
         return text in {"1", "true", "yes", "y", "on", "是", "启用", "开启"}
+
+    def _normalize_paper_source(self, value: Any) -> str:
+        text = self._as_text(value).lower()
+        if not text:
+            return "yolo"
+        if text in {"yolo", "training", "train", "trained", "dataset"}:
+            return "yolo"
+        if text in {"sam2", "standard", "std"}:
+            return "sam2"
+        raise ValueError("A4纸来源参数不正确")
 
     def _optional_positive_float(self, value: Any, field_name: str, default: float | None = None) -> float | None:
         if value is None:

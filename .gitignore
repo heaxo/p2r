@@ -17,6 +17,7 @@ data/*.sqlite3
 data/*.sqlite3-*
 node_modules/
 desktop-dist/
+desktop-dist-fixed/
 dist/
 build/
 logs_packaged_verify*/

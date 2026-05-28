@@ -63,6 +63,7 @@ class DatasetStore:
                     dxf_target_size_2_mm REAL,
                     dxf_target_x_mm REAL,
                     dxf_target_y_mm REAL,
+                    paper_source TEXT NOT NULL DEFAULT 'yolo',
                     use_plate_perspective INTEGER NOT NULL DEFAULT 0,
                     dxf_notch_fill_enabled INTEGER NOT NULL DEFAULT 0,
                     dxf_notch_fill_max_width_mm REAL NOT NULL DEFAULT 80.0,
@@ -89,6 +90,8 @@ class DatasetStore:
             item_columns = {row["name"] for row in conn.execute("PRAGMA table_info(dataset_items)").fetchall()}
             if "quantity" not in item_columns:
                 conn.execute("ALTER TABLE dataset_items ADD COLUMN quantity INTEGER")
+            if "paper_source" not in item_columns:
+                conn.execute("ALTER TABLE dataset_items ADD COLUMN paper_source TEXT NOT NULL DEFAULT 'yolo'")
 
     def mark_interrupted_work_failed(self) -> None:
         now = utc_now()
@@ -223,6 +226,7 @@ class DatasetStore:
             "dxf_target_size_2_mm": fields.get("dxf_target_size_2_mm"),
             "dxf_target_x_mm": fields.get("dxf_target_x_mm"),
             "dxf_target_y_mm": fields.get("dxf_target_y_mm"),
+            "paper_source": fields.get("paper_source") or "yolo",
             "use_plate_perspective": 1 if fields.get("use_plate_perspective") else 0,
             "dxf_notch_fill_enabled": 1 if fields.get("dxf_notch_fill_enabled") else 0,
             "dxf_notch_fill_max_width_mm": float(fields.get("dxf_notch_fill_max_width_mm") or 80.0),
@@ -279,6 +283,7 @@ class DatasetStore:
             "dxf_target_size_2_mm",
             "dxf_target_x_mm",
             "dxf_target_y_mm",
+            "paper_source",
             "use_plate_perspective",
             "dxf_notch_fill_enabled",
             "dxf_notch_fill_max_width_mm",
@@ -327,15 +332,20 @@ class DatasetStore:
                 raise KeyError(item_id)
             conn.execute("UPDATE datasets SET status = 'unrecognized', updated_at = ? WHERE id = ?", (utc_now(), dataset_id))
 
-    def begin_recognition(self, dataset_id: str) -> None:
+    def begin_recognition(self, dataset_id: str) -> int:
         now = utc_now()
         with self._lock, self._connect() as conn:
             item_count = conn.execute(
-                "SELECT COUNT(*) AS count FROM dataset_items WHERE dataset_id = ?",
+                """
+                SELECT COUNT(*) AS count
+                FROM dataset_items
+                WHERE dataset_id = ?
+                  AND status != 'completed'
+                """,
                 (dataset_id,),
             ).fetchone()["count"]
             if int(item_count or 0) == 0:
-                raise ValueError("数据集中没有可识别的数据")
+                raise ValueError("数据集中没有未识别的数据")
             conn.execute(
                 """
                 UPDATE datasets
@@ -360,9 +370,11 @@ class DatasetStore:
                     finished_at = NULL,
                     updated_at = ?
                 WHERE dataset_id = ?
+                  AND status != 'completed'
                 """,
                 (now, dataset_id),
             )
+            return int(item_count or 0)
 
     def finish_recognition(self, dataset_id: str, *, failed_count: int, last_error: str | None = None) -> None:
         now = utc_now()
@@ -380,3 +392,78 @@ class DatasetStore:
                 """,
                 (status, last_error, status, now, now, now, dataset_id),
             )
+
+    def clear_item_recognition(self, item_id: str, dataset_id: str) -> int:
+        now = utc_now()
+        with self._lock, self._connect() as conn:
+            cur = conn.execute(
+                """
+                UPDATE dataset_items
+                SET status = 'pending',
+                    progress = 0,
+                    message = '',
+                    result_json = NULL,
+                    run_dir = NULL,
+                    started_at = NULL,
+                    finished_at = NULL,
+                    updated_at = ?
+                WHERE id = ?
+                  AND dataset_id = ?
+                  AND status = 'completed'
+                """,
+                (now, item_id, dataset_id),
+            )
+            if cur.rowcount == 0:
+                exists = conn.execute(
+                    "SELECT 1 FROM dataset_items WHERE id = ? AND dataset_id = ?",
+                    (item_id, dataset_id),
+                ).fetchone()
+                if exists is None:
+                    raise KeyError(item_id)
+            if cur.rowcount:
+                conn.execute(
+                    """
+                    UPDATE datasets
+                    SET status = 'unrecognized',
+                        recognized_at = NULL,
+                        recognition_finished_at = NULL,
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (now, dataset_id),
+                )
+            return int(cur.rowcount or 0)
+
+    def clear_dataset_recognition(self, dataset_id: str) -> int:
+        now = utc_now()
+        with self._lock, self._connect() as conn:
+            cur = conn.execute(
+                """
+                UPDATE dataset_items
+                SET status = 'pending',
+                    progress = 0,
+                    message = '',
+                    result_json = NULL,
+                    run_dir = NULL,
+                    started_at = NULL,
+                    finished_at = NULL,
+                    updated_at = ?
+                WHERE dataset_id = ?
+                  AND status = 'completed'
+                """,
+                (now, dataset_id),
+            )
+            dataset_cur = conn.execute(
+                """
+                UPDATE datasets
+                SET status = 'unrecognized',
+                    recognized_at = NULL,
+                    recognition_finished_at = NULL,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (now, dataset_id),
+            )
+            if dataset_cur.rowcount == 0:
+                raise KeyError(dataset_id)
+            return int(cur.rowcount or 0)
