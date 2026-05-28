@@ -9,7 +9,7 @@ from pathlib import Path
 class Settings:
     """Application configuration loaded from environment variables."""
 
-    app_name: str = "plate-measure-http"
+    app_name: str = "pic2remnant-http"
     auth_token: str = "tk_c2VjcmV0LXJhbmRvbS10b2tlbi0xMjM0NTY3OA"
     output_root: Path = Path("measure_out")
     model_path: Path = Path("best2.pt")

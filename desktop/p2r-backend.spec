@@ -19,7 +19,9 @@ a = Analysis(
     pathex=[str(project_root)],
     binaries=[],
     datas=datas,
-    hiddenimports=["app.core.algorithm"] + collect_submodules("app") + collect_submodules("osam"),
+    hiddenimports=[
+        "app.core.algorithm",
+    ] + collect_submodules("app") + collect_submodules("osam") + collect_submodules("openpyxl") + collect_submodules("et_xmlfile"),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

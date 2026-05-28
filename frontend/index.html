@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>钢板 DXF 批量识别</title>
+  <title>Pic2Remnant - 批量识别</title>
   <style>
     :root {
       --bg: #f4f6f8;
@@ -11,13 +11,13 @@
       --text: #172033;
       --muted: #667085;
       --border: #d8dee5;
-      --primary: #2563eb;
-      --primary-dark: #1d4ed8;
+      --primary: #2D579B;
+      --primary-dark: #23467d;
       --green: #15803d;
       --amber: #b45309;
       --red: #b91c1c;
       --slate: #334155;
-      --soft-blue: #eff6ff;
+      --soft-blue: #eef4fb;
       --soft-green: #ecfdf3;
       --soft-amber: #fffbeb;
       --soft-red: #fef2f2;
@@ -41,24 +41,75 @@
     }
 
     .topbar {
+      height: 50px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 16px;
+      gap: 12px;
       margin-bottom: 10px;
+      padding: 0 10px;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, .08);
     }
 
     h1 {
       margin: 0;
-      font-size: 22px;
-      line-height: 1.25;
+      font-size: 18px;
+      line-height: 1.2;
       letter-spacing: 0;
+    }
+
+    .top-title-meta {
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 2px;
     }
 
     .client-id {
       color: var(--muted);
       font-size: 12px;
       white-space: nowrap;
+    }
+
+    .top-actions {
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: #f8fafc;
+      padding: 3px;
+    }
+
+    .top-right {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .top-link {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 92px;
+      min-height: 30px;
+      padding: 0 10px;
+      border-radius: 5px;
+      color: #344054;
+      font-size: 13px;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+
+    .top-link.active {
+      background: #fff;
+      color: var(--primary-dark);
+      font-weight: 700;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, .12);
     }
 
     .grid {
@@ -663,6 +714,8 @@
       .topbar {
         align-items: flex-start;
         flex-direction: column;
+        height: auto;
+        padding: 8px 10px;
       }
 
       .actions,
@@ -677,8 +730,17 @@
 <body>
   <div class="app">
     <header class="topbar">
-      <h1>钢板 DXF 批量识别</h1>
-      <div class="client-id" id="clientIdText"></div>
+      <div>
+        <h1>Pic2Remnant</h1>
+        <div class="top-title-meta">批量识别</div>
+      </div>
+      <div class="top-right">
+        <nav class="top-actions" aria-label="页面导航">
+          <a class="top-link" href="/ui/datasets.html">数据集</a>
+          <a class="top-link active" href="/ui/">批量识别</a>
+        </nav>
+        <div class="client-id" id="clientIdText"></div>
+      </div>
     </header>
 
     <main class="grid">
@@ -782,7 +844,6 @@
     }
 
     const clientId = getClientId();
-    clientIdText.textContent = `客户端：${clientId}`;
 
     function apiHeaders() {
       return {

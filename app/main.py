@@ -28,9 +28,9 @@ logger.info(
 from app.api.routes import router
 
 app = FastAPI(
-    title="Plate Measure HTTP Service",
+    title="Pic2Remnant HTTP Service",
     version="1.2.0",
-    description="Plate measurement service. It returns generated DXF, mask, image and JSON paths.",
+    description="Pic2Remnant service. It returns generated DXF, mask, image and JSON paths.",
 )
 
 

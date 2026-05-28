@@ -1,13 +1,88 @@
-const { app, BrowserWindow, dialog, shell } = require('electron');
+const { app, BrowserWindow, dialog, shell, Menu } = require('electron');
 const fs = require('fs');
 const http = require('http');
 const net = require('net');
 const path = require('path');
 const { spawn } = require('child_process');
 
+app.setName('Pic2Remnant');
+
 let mainWindow = null;
 let backendProcess = null;
 let backendPort = null;
+
+function appUrl(page = '') {
+  const cleanPage = String(page || '').replace(/^\/+/, '');
+  return `http://127.0.0.1:${backendPort}/ui/${cleanPage}`;
+}
+
+function loadUiPage(page) {
+  if (!mainWindow || !backendPort) {
+    return;
+  }
+  mainWindow.loadURL(appUrl(page));
+}
+
+function createAppMenu() {
+  const runtimeRoot = path.join(app.getPath('userData'), 'runtime');
+  const template = [
+    {
+      label: '功能',
+      submenu: [
+        {
+          label: '数据集',
+          accelerator: 'Ctrl+1',
+          click: () => loadUiPage('datasets.html'),
+        },
+        {
+          label: '批量识别',
+          accelerator: 'Ctrl+2',
+          click: () => loadUiPage(''),
+        },
+        { type: 'separator' },
+        {
+          label: '退出',
+          role: 'quit',
+        },
+      ],
+    },
+    {
+      label: '视图',
+      submenu: [
+        { label: '刷新', role: 'reload' },
+        { label: '强制刷新', role: 'forceReload' },
+        { type: 'separator' },
+        { label: '开发者工具', role: 'toggleDevTools' },
+        { type: 'separator' },
+        { label: '放大', role: 'zoomIn' },
+        { label: '缩小', role: 'zoomOut' },
+        { label: '实际大小', role: 'resetZoom' },
+      ],
+    },
+    {
+      label: '帮助',
+      submenu: [
+        {
+          label: '打开运行目录',
+          click: () => shell.openPath(runtimeRoot),
+        },
+        {
+          label: '关于',
+          click: () => {
+            dialog.showMessageBox(mainWindow, {
+              type: 'info',
+              title: '关于 Pic2Remnant',
+              message: 'Pic2Remnant',
+              detail: 'Lantek 余料图识别',
+            });
+          },
+        },
+      ],
+    },
+  ];
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
 
 function findFreePort() {
   return new Promise((resolve, reject) => {
@@ -175,6 +250,7 @@ function createWindow() {
     minWidth: 980,
     minHeight: 680,
     show: false,
+    icon: path.join(__dirname, 'icon.ico'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -182,14 +258,15 @@ function createWindow() {
     },
   });
 
-  mainWindow.setMenuBarVisibility(false);
+  createAppMenu();
+  mainWindow.setMenuBarVisibility(true);
   mainWindow.once('ready-to-show', () => mainWindow.show());
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: 'deny' };
   });
 
-  mainWindow.loadURL(`http://127.0.0.1:${backendPort}/ui/`);
+  mainWindow.loadURL(appUrl('datasets.html'));
 }
 
 function stopBackend() {

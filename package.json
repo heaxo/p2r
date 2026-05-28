@@ -1,7 +1,7 @@
 {
   "name": "p2r-desktop",
   "version": "1.2.0",
-  "description": "Plate Measure desktop app",
+  "description": "Pic2Remnant desktop app",
   "author": "p2r",
   "license": "SEE LICENSE IN LICENSE",
   "main": "desktop/main.js",
@@ -12,14 +12,16 @@
     "backend:build": ".venv\\Scripts\\python -m PyInstaller desktop/p2r-backend.spec --noconfirm"
   },
   "build": {
-    "appId": "com.p2r.desktop",
-    "productName": "Plate Measure",
+    "appId": "com.pic2remnant.desktop",
+    "productName": "Pic2Remnant",
     "directories": {
       "output": "desktop-dist"
     },
     "files": [
       "desktop/main.js",
       "desktop/preload.js",
+      "desktop/icon.ico",
+      "desktop/icon.png",
       "package.json"
     ],
     "extraResources": [
@@ -29,7 +31,8 @@
       }
     ],
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "desktop/icon.ico"
     },
     "nsis": {
       "oneClick": false,
@@ -37,6 +40,7 @@
     }
   },
   "devDependencies": {
+    "bootstrap": "^5.3.3",
     "electron": "^31.7.7",
     "electron-builder": "^24.13.3"
   }

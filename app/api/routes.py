@@ -10,6 +10,7 @@ import math
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile, status
 from fastapi.responses import StreamingResponse
@@ -20,10 +21,12 @@ from app.config import get_settings
 from app.errors import public_error_message
 from app.schemas import MeasureResponse
 from app.security import require_token
+from app.services.dataset_service import DatasetImportError, DatasetNameConflict, DatasetService
 from app.services.measure_service import MeasureService
 
 router = APIRouter()
 service = MeasureService(get_settings())
+dataset_service = DatasetService(service)
 CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{8,96}$")
 
 
@@ -85,7 +88,236 @@ async def health() -> dict[str, str]:
     """Health check endpoint."""
 
     logger.debug("Health check requested")
-    return {"ok": "true", "service": "plate-measure-http"}
+    return {"ok": "true", "service": "pic2remnant-http"}
+
+
+def _dataset_item_fields(
+    *,
+    plate_no: str | None,
+    quantity: str | None,
+    material: str | None,
+    thickness_mm: float | None,
+    dxf_target_size_1_mm: float | None,
+    dxf_target_size_2_mm: float | None,
+    dxf_target_x_mm: float | None,
+    dxf_target_y_mm: float | None,
+    use_plate_perspective: bool,
+    dxf_notch_fill_enabled: bool,
+    dxf_notch_fill_max_width_mm: float | None,
+    dxf_notch_fill_max_depth_mm: float | None,
+) -> dict:
+    return {
+        "plate_no": plate_no,
+        "quantity": quantity,
+        "material": material,
+        "thickness_mm": thickness_mm,
+        "dxf_target_size_1_mm": dxf_target_size_1_mm,
+        "dxf_target_size_2_mm": dxf_target_size_2_mm,
+        "dxf_target_x_mm": dxf_target_x_mm,
+        "dxf_target_y_mm": dxf_target_y_mm,
+        "use_plate_perspective": use_plate_perspective,
+        "dxf_notch_fill_enabled": dxf_notch_fill_enabled,
+        "dxf_notch_fill_max_width_mm": dxf_notch_fill_max_width_mm,
+        "dxf_notch_fill_max_depth_mm": dxf_notch_fill_max_depth_mm,
+    }
+
+
+@router.get("/datasets", dependencies=[Depends(require_token)])
+async def list_datasets() -> dict:
+    return {"ok": True, "datasets": dataset_service.list_datasets()}
+
+
+@router.post("/datasets", dependencies=[Depends(require_token)])
+async def create_dataset(
+    name: Annotated[str | None, Form(description="可选，数据集名称；为空时使用年月日时分秒")] = None,
+) -> dict:
+    try:
+        dataset = dataset_service.create_dataset(name)
+        return {"ok": True, "dataset": dataset}
+    except DatasetNameConflict as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
+@router.get("/datasets/excel-template", dependencies=[Depends(require_token)])
+async def download_dataset_excel_template() -> StreamingResponse:
+    content = await run_in_threadpool(dataset_service.create_excel_template)
+    headers = {"Content-Disposition": 'attachment; filename="dataset_template.xlsx"'}
+    return StreamingResponse(
+        iter([content]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers=headers,
+    )
+
+
+@router.post("/datasets/import-excel", dependencies=[Depends(require_token)])
+async def import_dataset_excel(
+    excel: Annotated[UploadFile, File(description="Excel 数据集文件")],
+    name: Annotated[str | None, Form(description="可选，数据集名称")] = None,
+) -> dict:
+    try:
+        dataset = await dataset_service.import_excel(excel, name)
+        return {"ok": True, "dataset": dataset}
+    except DatasetNameConflict as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except DatasetImportError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.get("/datasets/{dataset_id}", dependencies=[Depends(require_token)])
+async def get_dataset(dataset_id: str) -> dict:
+    try:
+        return {"ok": True, "dataset": dataset_service.get_dataset_detail(dataset_id)}
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据集不存在") from exc
+
+
+@router.post("/datasets/{dataset_id}/copy", dependencies=[Depends(require_token)])
+async def copy_dataset(
+    dataset_id: str,
+    name: Annotated[str | None, Form(description="可选，新数据集名称")] = None,
+) -> dict:
+    try:
+        return {"ok": True, "dataset": dataset_service.copy_dataset(dataset_id, name)}
+    except DatasetNameConflict as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据集不存在") from exc
+
+
+@router.delete("/datasets/{dataset_id}", dependencies=[Depends(require_token)])
+async def delete_dataset(dataset_id: str) -> dict:
+    try:
+        dataset_service.delete_dataset(dataset_id)
+        return {"ok": True, "datasets": dataset_service.list_datasets()}
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据集不存在") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/datasets/{dataset_id}/recognize", dependencies=[Depends(require_token)])
+async def recognize_dataset(dataset_id: str) -> dict:
+    try:
+        return {"ok": True, "dataset": dataset_service.enqueue_recognition(dataset_id)}
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据集不存在") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.get("/datasets/{dataset_id}/download-dxf", dependencies=[Depends(require_token)])
+async def download_dataset_dxf(dataset_id: str) -> StreamingResponse:
+    try:
+        content, filename, count = await run_in_threadpool(dataset_service.download_dataset_dxf_zip, dataset_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据集不存在") from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    headers = {
+        "Content-Disposition": f'attachment; filename="dataset_dxf.zip"; filename*=UTF-8\'\'{quote(filename)}',
+        "X-DXF-File-Count": str(count),
+    }
+    return StreamingResponse(iter([content]), media_type="application/zip", headers=headers)
+
+
+@router.post("/datasets/{dataset_id}/items", dependencies=[Depends(require_token)])
+async def add_dataset_item(
+    dataset_id: str,
+    image: Annotated[UploadFile, File(description="图片")],
+    plate_no: Annotated[str | None, Form(description="板材编号")] = None,
+    quantity: Annotated[str | None, Form(description="数量")] = None,
+    material: Annotated[str | None, Form(description="材质")] = None,
+    thickness_mm: Annotated[float | None, Form(description="厚度 mm")] = None,
+    dxf_target_size_1_mm: Annotated[float | None, Form(description="尺寸1 mm")] = None,
+    dxf_target_size_2_mm: Annotated[float | None, Form(description="尺寸2 mm")] = None,
+    dxf_target_x_mm: Annotated[float | None, Form(description="X mm")] = None,
+    dxf_target_y_mm: Annotated[float | None, Form(description="Y mm")] = None,
+    use_plate_perspective: Annotated[bool, Form(description="是否启用钢板透视")] = False,
+    dxf_notch_fill_enabled: Annotated[bool, Form(description="是否启用夹钳修复")] = False,
+    dxf_notch_fill_max_width_mm: Annotated[float | None, Form(description="夹钳修复最大宽度 mm")] = 80.0,
+    dxf_notch_fill_max_depth_mm: Annotated[float | None, Form(description="夹钳修复最大深度 mm")] = 25.0,
+) -> dict:
+    try:
+        item = await dataset_service.add_item(
+            dataset_id,
+            image=image,
+            fields=_dataset_item_fields(
+                plate_no=plate_no,
+                quantity=quantity,
+                material=material,
+                thickness_mm=thickness_mm,
+                dxf_target_size_1_mm=dxf_target_size_1_mm,
+                dxf_target_size_2_mm=dxf_target_size_2_mm,
+                dxf_target_x_mm=dxf_target_x_mm,
+                dxf_target_y_mm=dxf_target_y_mm,
+                use_plate_perspective=use_plate_perspective,
+                dxf_notch_fill_enabled=dxf_notch_fill_enabled,
+                dxf_notch_fill_max_width_mm=dxf_notch_fill_max_width_mm,
+                dxf_notch_fill_max_depth_mm=dxf_notch_fill_max_depth_mm,
+            ),
+        )
+        return {"ok": True, "item": item, "dataset": dataset_service.get_dataset_detail(dataset_id)}
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据集不存在") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+
+@router.put("/datasets/{dataset_id}/items/{item_id}", dependencies=[Depends(require_token)])
+async def update_dataset_item(
+    dataset_id: str,
+    item_id: str,
+    image: Annotated[UploadFile | None, File(description="可选，替换图片")] = None,
+    plate_no: Annotated[str | None, Form(description="板材编号")] = None,
+    quantity: Annotated[str | None, Form(description="数量")] = None,
+    material: Annotated[str | None, Form(description="材质")] = None,
+    thickness_mm: Annotated[float | None, Form(description="厚度 mm")] = None,
+    dxf_target_size_1_mm: Annotated[float | None, Form(description="尺寸1 mm")] = None,
+    dxf_target_size_2_mm: Annotated[float | None, Form(description="尺寸2 mm")] = None,
+    dxf_target_x_mm: Annotated[float | None, Form(description="X mm")] = None,
+    dxf_target_y_mm: Annotated[float | None, Form(description="Y mm")] = None,
+    use_plate_perspective: Annotated[bool, Form(description="是否启用钢板透视")] = False,
+    dxf_notch_fill_enabled: Annotated[bool, Form(description="是否启用夹钳修复")] = False,
+    dxf_notch_fill_max_width_mm: Annotated[float | None, Form(description="夹钳修复最大宽度 mm")] = 80.0,
+    dxf_notch_fill_max_depth_mm: Annotated[float | None, Form(description="夹钳修复最大深度 mm")] = 25.0,
+) -> dict:
+    try:
+        item = await dataset_service.update_item(
+            dataset_id,
+            item_id,
+            image=image,
+            fields=_dataset_item_fields(
+                plate_no=plate_no,
+                quantity=quantity,
+                material=material,
+                thickness_mm=thickness_mm,
+                dxf_target_size_1_mm=dxf_target_size_1_mm,
+                dxf_target_size_2_mm=dxf_target_size_2_mm,
+                dxf_target_x_mm=dxf_target_x_mm,
+                dxf_target_y_mm=dxf_target_y_mm,
+                use_plate_perspective=use_plate_perspective,
+                dxf_notch_fill_enabled=dxf_notch_fill_enabled,
+                dxf_notch_fill_max_width_mm=dxf_notch_fill_max_width_mm,
+                dxf_notch_fill_max_depth_mm=dxf_notch_fill_max_depth_mm,
+            ),
+        )
+        return {"ok": True, "item": item, "dataset": dataset_service.get_dataset_detail(dataset_id)}
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据不存在") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+
+@router.delete("/datasets/{dataset_id}/items/{item_id}", dependencies=[Depends(require_token)])
+async def delete_dataset_item(dataset_id: str, item_id: str) -> dict:
+    try:
+        dataset_service.delete_item(dataset_id, item_id)
+        return {"ok": True, "dataset": dataset_service.get_dataset_detail(dataset_id)}
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据不存在") from exc
 
 
 @router.post("/tasks/upload", dependencies=[Depends(require_token)])

@@ -1,0 +1,1217 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pic2Remnant - 数据集管理</title>
+  <link rel="stylesheet" href="/ui/vendor/bootstrap/bootstrap.min.css" />
+  <style>
+    :root {
+      --app-bg: #eef2f7;
+      --app-panel: #ffffff;
+      --app-border: #d7deea;
+      --app-muted: #667085;
+      --app-text: #1f2937;
+      --app-blue: #2D579B;
+      --app-blue-dark: #23467d;
+      --app-blue-soft: #eef4fb;
+      --app-sidebar: #f8fafc;
+    }
+
+    body {
+      min-height: 100vh;
+      overflow: hidden;
+      background: var(--app-bg);
+      color: var(--app-text);
+      font-family: Arial, "Microsoft YaHei", sans-serif;
+    }
+
+    .desktop-frame {
+      width: calc(100% - 16px);
+      height: calc(100vh - 28px);
+      margin: 0 auto;
+      padding: 10px 0 18px;
+      display: grid;
+      grid-template-rows: auto 1fr;
+    }
+
+    .titlebar {
+      background: #fff;
+      border: 1px solid var(--app-border);
+      border-radius: 8px;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, .08);
+      margin-bottom: 10px;
+    }
+
+    .titlebar-inner {
+      height: 50px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 0 12px;
+    }
+
+    .app-title {
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.2;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    .app-nav {
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+      border: 1px solid var(--app-border);
+      border-radius: 7px;
+      background: #f8fafc;
+      padding: 3px;
+    }
+
+    .app-nav a {
+      min-width: 92px;
+      min-height: 30px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 5px;
+      color: #344054;
+      text-decoration: none;
+      font-size: 13px;
+      padding: 0 10px;
+    }
+
+    .app-nav a.active {
+      background: #fff;
+      color: var(--app-blue);
+      font-weight: 700;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, .12);
+    }
+
+    .workspace {
+      min-height: 0;
+      display: grid;
+      grid-template-columns: 320px minmax(0, 1fr);
+      background: #fff;
+      border: 1px solid var(--app-border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .sidebar {
+      min-height: 0;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      background: var(--app-sidebar);
+      border-right: 1px solid var(--app-border);
+    }
+
+    .sidebar-head,
+    .sidebar-foot,
+    .content-head {
+      background: #fff;
+      border-bottom: 1px solid var(--app-border);
+      padding: 10px;
+    }
+
+    .sidebar-foot {
+      border-top: 1px solid var(--app-border);
+      border-bottom: 0;
+    }
+
+    .dataset-list {
+      min-height: 0;
+      overflow: auto;
+      padding: 8px;
+    }
+
+    .dataset-row {
+      width: 100%;
+      display: grid;
+      gap: 5px;
+      border: 1px solid transparent;
+      border-radius: 7px;
+      background: transparent;
+      color: inherit;
+      text-align: left;
+      padding: 9px 10px;
+    }
+
+    .dataset-row:hover {
+      background: #fff;
+      border-color: var(--app-border);
+    }
+
+    .dataset-row.active {
+      background: var(--app-blue-soft);
+      border-color: rgba(45, 87, 155, .42);
+    }
+
+    .dataset-name {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-weight: 700;
+    }
+
+    .content {
+      min-width: 0;
+      min-height: 0;
+      display: grid;
+      grid-template-rows: auto 1fr;
+    }
+
+    .content-head {
+      min-height: 76px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 12px;
+    }
+
+    .content-body {
+      min-height: 0;
+      padding: 10px;
+      overflow: hidden;
+    }
+
+    .table-card {
+      height: 100%;
+      min-height: 0;
+      display: grid;
+      grid-template-rows: auto 1fr;
+      background: #fff;
+      border: 1px solid var(--app-border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .table-card-head {
+      min-height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      border-bottom: 1px solid var(--app-border);
+      padding: 8px 10px;
+      background: #fff;
+    }
+
+    .table-wrap {
+      min-height: 0;
+      overflow: auto;
+    }
+
+    .data-table {
+      min-width: 1180px;
+      margin-bottom: 0;
+    }
+
+    .data-table th {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      background: #f8fafc;
+      color: #344054;
+      border-bottom-color: var(--app-border);
+      white-space: nowrap;
+    }
+
+    .data-table td {
+      vertical-align: top;
+      border-color: var(--app-border);
+    }
+
+    .small-muted {
+      color: var(--app-muted);
+      font-size: 12px;
+    }
+
+    .status-badge {
+      border: 1px solid transparent;
+      font-weight: 700;
+    }
+
+    .status-unrecognized,
+    .status-pending,
+    .status-queued {
+      background: #f8fafc;
+      border-color: #e2e8f0;
+      color: #475569;
+    }
+
+    .status-recognizing,
+    .status-processing {
+      background: #fffbeb;
+      border-color: #fde68a;
+      color: #b45309;
+    }
+
+    .status-recognized,
+    .status-completed {
+      background: #ecfdf3;
+      border-color: #bbf7d0;
+      color: #15803d;
+    }
+
+    .status-failed {
+      background: #fef2f2;
+      border-color: #fecaca;
+      color: #b91c1c;
+    }
+
+    .preview-image {
+      width: 78px;
+      height: 56px;
+      object-fit: cover;
+      border: 1px solid var(--app-border);
+      border-radius: 6px;
+      background: #f8fafc;
+    }
+
+    .modal-image-preview {
+      width: 78px;
+      height: 56px;
+      object-fit: cover;
+      display: block;
+      border: 1px solid var(--app-border);
+      border-radius: 6px;
+      background: #f8fafc;
+      margin-top: 8px;
+    }
+
+    .dxf-preview-image {
+      width: 78px;
+      height: 56px;
+      object-fit: contain;
+      display: block;
+      border: 1px solid var(--app-border);
+      border-radius: 6px;
+      background: #f8fafc;
+    }
+
+    .dxf-preview-placeholder {
+      width: 78px;
+      height: 56px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px dashed var(--app-border);
+      border-radius: 6px;
+      background: #f8fafc;
+      color: var(--app-muted);
+      font-size: 12px;
+      text-align: center;
+    }
+
+    .empty-state {
+      height: 100%;
+      min-height: 260px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--app-muted);
+      text-align: center;
+      padding: 24px;
+    }
+
+    .message-line {
+      min-height: 20px;
+      font-size: 13px;
+    }
+
+    .btn {
+      border-radius: 6px;
+    }
+
+    .btn-primary {
+      background-color: var(--app-blue);
+      border-color: var(--app-blue);
+    }
+
+    .btn-primary:hover,
+    .btn-primary:focus {
+      background-color: var(--app-blue-dark);
+      border-color: var(--app-blue-dark);
+    }
+
+    .btn-outline-primary {
+      color: var(--app-blue);
+      border-color: var(--app-blue);
+    }
+
+    .btn-outline-primary:hover,
+    .btn-outline-primary:focus {
+      color: #fff;
+      background-color: var(--app-blue);
+      border-color: var(--app-blue);
+    }
+
+    .btn-icon {
+      min-width: 34px;
+      padding-left: 8px;
+      padding-right: 8px;
+    }
+
+    .modal {
+      background: rgba(15, 23, 42, .34);
+    }
+
+    .modal.show {
+      display: block;
+    }
+
+    .modal-dialog {
+      margin-top: 7vh;
+    }
+
+    .form-label {
+      color: #344054;
+      font-size: 12px;
+      margin-bottom: 4px;
+    }
+
+    .dxf-cell {
+      min-width: 290px;
+      max-width: 360px;
+    }
+
+    .dxf-result {
+      display: grid;
+      grid-template-columns: 78px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .dxf-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 100%;
+    }
+
+    .dxf-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      align-items: stretch;
+    }
+
+    .dxf-actions .btn {
+      min-height: 24px;
+      padding: 2px 8px;
+      line-height: 1.2;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    @media (max-width: 980px) {
+      body {
+        overflow: auto;
+      }
+
+      .desktop-frame,
+      .workspace,
+      .sidebar,
+      .content,
+      .table-card {
+        height: auto;
+        display: block;
+      }
+
+      .desktop-frame {
+        width: calc(100% - 16px);
+        padding: 10px 0 18px;
+      }
+
+      .workspace {
+        min-height: auto;
+      }
+
+      .sidebar {
+        border-right: 0;
+        border-bottom: 1px solid var(--app-border);
+      }
+
+      .dataset-list {
+        max-height: 280px;
+      }
+
+      .content-body {
+        overflow: visible;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="desktop-frame">
+    <header class="titlebar">
+      <div class="titlebar-inner">
+        <div>
+          <h1 class="app-title">Pic2Remnant</h1>
+          <div class="small-muted">数据集管理</div>
+        </div>
+        <nav class="app-nav" aria-label="页面导航">
+          <a class="active" href="/ui/datasets.html">数据集</a>
+          <a href="/ui/">批量识别</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <aside class="sidebar">
+        <div class="sidebar-head">
+          <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
+            <strong>数据集</strong>
+            <button id="refreshBtn" class="btn btn-outline-secondary btn-sm btn-icon" type="button" title="刷新">↻</button>
+          </div>
+          <div class="d-grid gap-2">
+            <button id="openCreateDatasetBtn" class="btn btn-primary btn-sm" type="button">新建数据集</button>
+            <div class="btn-group btn-group-sm" role="group" aria-label="Excel 操作">
+              <button id="uploadExcelBtn" class="btn btn-outline-primary" type="button">上传 Excel</button>
+              <button id="downloadTemplateBtn" class="btn btn-outline-secondary" type="button">下载模板</button>
+            </div>
+            <input id="excelFile" type="file" accept=".xlsx,.xlsm" hidden />
+          </div>
+        </div>
+        <div id="datasetList" class="dataset-list"></div>
+        <div class="sidebar-foot">
+          <div id="listMessage" class="message-line text-secondary"></div>
+        </div>
+      </aside>
+
+      <section class="content">
+        <div class="content-head">
+          <div class="min-w-0">
+            <div id="selectedTitle" class="h6 mb-1">未选择数据集</div>
+            <div id="selectedMeta" class="small-muted"></div>
+            <div id="detailMessage" class="message-line text-secondary"></div>
+          </div>
+          <div class="d-flex flex-wrap justify-content-end gap-2">
+            <button id="openItemBtn" class="btn btn-primary btn-sm" type="button" disabled>新增数据</button>
+            <button id="recognizeDatasetBtn" class="btn btn-outline-primary btn-sm" type="button" disabled>开始识别</button>
+            <button id="copyDatasetBtn" class="btn btn-outline-secondary btn-sm" type="button" disabled>复制</button>
+            <button id="downloadDxfBtn" class="btn btn-outline-secondary btn-sm" type="button" disabled>下载 DXF</button>
+            <button id="deleteDatasetBtn" class="btn btn-outline-danger btn-sm" type="button" disabled>删除</button>
+          </div>
+        </div>
+
+        <div class="content-body">
+          <div class="table-card">
+            <div class="table-card-head">
+              <strong>数据列表</strong>
+              <span id="itemCount" class="small-muted"></span>
+            </div>
+            <div id="emptyItems" class="empty-state">请选择左侧数据集，或新建数据集后录入数据。</div>
+            <div id="itemsTableWrap" class="table-wrap" hidden>
+              <table class="table table-hover table-sm data-table align-middle">
+                <thead>
+                  <tr>
+                    <th style="width: 96px;">图片</th>
+                    <th>板材信息</th>
+                    <th>尺寸设置</th>
+                    <th>识别参数</th>
+                    <th>状态</th>
+                    <th>DXF</th>
+                    <th>其他结果</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="itemsBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="datasetModal" class="modal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <form id="createDatasetForm">
+          <div class="modal-header">
+            <h2 class="modal-title fs-6">新建数据集</h2>
+            <button type="button" class="btn-close" data-close-modal="datasetModal" aria-label="关闭"></button>
+          </div>
+          <div class="modal-body">
+            <label for="datasetName" class="form-label">数据集名称</label>
+            <input id="datasetName" name="name" class="form-control" type="text" placeholder="留空自动使用年月日时分秒" />
+            <div id="datasetNameError" class="invalid-feedback d-block"></div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-outline-secondary" data-close-modal="datasetModal">取消</button>
+            <button class="btn btn-primary" type="submit">创建</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div id="itemModal" class="modal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl">
+      <div class="modal-content">
+        <form id="itemForm">
+          <div class="modal-header">
+            <h2 id="itemModalTitle" class="modal-title fs-6">新增数据</h2>
+            <button type="button" class="btn-close" data-close-modal="itemModal" aria-label="关闭"></button>
+          </div>
+          <div class="modal-body">
+            <div class="row g-3">
+              <div class="col-12 col-md-4">
+                <label for="itemImage" class="form-label">图片</label>
+                <input id="itemImage" class="form-control" type="file" accept="image/*" />
+                <img id="itemImagePreview" class="modal-image-preview" alt="图片预览" hidden />
+                <div id="imageHelp" class="form-text">编辑时不选择图片则保留原图。</div>
+              </div>
+              <div class="col-6 col-md-2">
+                <label for="plateNo" class="form-label">板材编号</label>
+                <input id="plateNo" class="form-control" type="text" />
+              </div>
+              <div class="col-6 col-md-2">
+                <label for="quantity" class="form-label">数量</label>
+                <input id="quantity" class="form-control" type="number" step="1" min="1" />
+              </div>
+              <div class="col-6 col-md-2">
+                <label for="material" class="form-label">材质</label>
+                <input id="material" class="form-control" type="text" />
+              </div>
+              <div class="col-6 col-md-2">
+                <label for="thickness" class="form-label">厚度 mm</label>
+                <input id="thickness" class="form-control" type="number" step="0.001" min="0" />
+              </div>
+              <div class="col-6 col-md-2">
+                <label for="size1" class="form-label">尺寸1 mm</label>
+                <input id="size1" class="form-control" type="number" step="0.001" min="0" />
+              </div>
+              <div class="col-6 col-md-2">
+                <label for="size2" class="form-label">尺寸2 mm</label>
+                <input id="size2" class="form-control" type="number" step="0.001" min="0" />
+              </div>
+              <div class="col-6 col-md-2">
+                <label for="targetX" class="form-label">x mm</label>
+                <input id="targetX" class="form-control" type="number" step="0.001" min="0" />
+              </div>
+              <div class="col-6 col-md-2">
+                <label for="targetY" class="form-label">y mm</label>
+                <input id="targetY" class="form-control" type="number" step="0.001" min="0" />
+              </div>
+              <div class="col-6 col-md-2">
+                <label for="notchWidth" class="form-label">夹钳宽度 mm</label>
+                <input id="notchWidth" class="form-control" type="number" step="0.001" min="0" value="80" />
+              </div>
+              <div class="col-6 col-md-2">
+                <label for="notchDepth" class="form-label">夹钳深度 mm</label>
+                <input id="notchDepth" class="form-control" type="number" step="0.001" min="0" value="25" />
+              </div>
+              <div class="col-12 col-md-4 d-flex align-items-end gap-4">
+                <div class="form-check">
+                  <input id="usePlatePerspective" class="form-check-input" type="checkbox" />
+                  <label class="form-check-label" for="usePlatePerspective">钢板透视</label>
+                </div>
+                <div class="form-check">
+                  <input id="notchEnabled" class="form-check-input" type="checkbox" />
+                  <label class="form-check-label" for="notchEnabled">夹钳修复</label>
+                </div>
+              </div>
+            </div>
+            <div id="itemFormMessage" class="message-line text-secondary mt-3"></div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-outline-secondary" data-close-modal="itemModal">取消</button>
+            <button id="saveItemBtn" class="btn btn-primary" type="submit">保存</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const AUTH_TOKEN = 'tk_c2VjcmV0LXJhbmRvbS10b2tlbi0xMjM0NTY3OA';
+    const state = {
+      datasets: [],
+      selectedId: null,
+      selected: null,
+      editingItem: null,
+      pollTimer: null,
+      itemPreviewUrl: null,
+    };
+
+    const els = {
+      datasetList: document.getElementById('datasetList'),
+      listMessage: document.getElementById('listMessage'),
+      detailMessage: document.getElementById('detailMessage'),
+      selectedTitle: document.getElementById('selectedTitle'),
+      selectedMeta: document.getElementById('selectedMeta'),
+      createDatasetForm: document.getElementById('createDatasetForm'),
+      datasetName: document.getElementById('datasetName'),
+      datasetNameError: document.getElementById('datasetNameError'),
+      excelFile: document.getElementById('excelFile'),
+      refreshBtn: document.getElementById('refreshBtn'),
+      openCreateDatasetBtn: document.getElementById('openCreateDatasetBtn'),
+      uploadExcelBtn: document.getElementById('uploadExcelBtn'),
+      downloadTemplateBtn: document.getElementById('downloadTemplateBtn'),
+      copyDatasetBtn: document.getElementById('copyDatasetBtn'),
+      deleteDatasetBtn: document.getElementById('deleteDatasetBtn'),
+      recognizeDatasetBtn: document.getElementById('recognizeDatasetBtn'),
+      downloadDxfBtn: document.getElementById('downloadDxfBtn'),
+      openItemBtn: document.getElementById('openItemBtn'),
+      itemForm: document.getElementById('itemForm'),
+      itemModalTitle: document.getElementById('itemModalTitle'),
+      itemFormMessage: document.getElementById('itemFormMessage'),
+      saveItemBtn: document.getElementById('saveItemBtn'),
+      itemImage: document.getElementById('itemImage'),
+      itemImagePreview: document.getElementById('itemImagePreview'),
+      imageHelp: document.getElementById('imageHelp'),
+      plateNo: document.getElementById('plateNo'),
+      quantity: document.getElementById('quantity'),
+      material: document.getElementById('material'),
+      thickness: document.getElementById('thickness'),
+      size1: document.getElementById('size1'),
+      size2: document.getElementById('size2'),
+      targetX: document.getElementById('targetX'),
+      targetY: document.getElementById('targetY'),
+      usePlatePerspective: document.getElementById('usePlatePerspective'),
+      notchEnabled: document.getElementById('notchEnabled'),
+      notchWidth: document.getElementById('notchWidth'),
+      notchDepth: document.getElementById('notchDepth'),
+      emptyItems: document.getElementById('emptyItems'),
+      itemsTableWrap: document.getElementById('itemsTableWrap'),
+      itemsBody: document.getElementById('itemsBody'),
+      itemCount: document.getElementById('itemCount'),
+    };
+
+    const statusText = {
+      unrecognized: '未识别',
+      recognizing: '识别中',
+      recognized: '已识别',
+      failed: '失败',
+      pending: '未识别',
+      queued: '排队中',
+      processing: '识别中',
+      completed: '完成',
+    };
+
+    function setMessage(element, text, type = '') {
+      element.textContent = text || '';
+      element.className = `message-line ${type ? `text-${type}` : 'text-secondary'}`;
+    }
+
+    function showError(element, error) {
+      const detail = error && error.detail ? error.detail : error;
+      const text = Array.isArray(detail) ? detail.map(item => item.msg || JSON.stringify(item)).join('；') : String(detail || '操作失败');
+      setMessage(element, text, 'danger');
+    }
+
+    function showModal(id) {
+      const modal = document.getElementById(id);
+      modal.classList.add('show');
+      modal.removeAttribute('aria-hidden');
+      document.body.classList.add('modal-open');
+    }
+
+    function hideModal(id) {
+      const modal = document.getElementById(id);
+      modal.classList.remove('show');
+      modal.setAttribute('aria-hidden', 'true');
+      document.body.classList.remove('modal-open');
+      if (id === 'itemModal') {
+        clearItemPreviewUrl();
+      }
+    }
+
+    function clearItemPreviewUrl() {
+      if (state.itemPreviewUrl) {
+        URL.revokeObjectURL(state.itemPreviewUrl);
+        state.itemPreviewUrl = null;
+      }
+    }
+
+    function setItemImagePreview(url) {
+      clearItemPreviewUrl();
+      if (url) {
+        els.itemImagePreview.src = url;
+        els.itemImagePreview.hidden = false;
+      } else {
+        els.itemImagePreview.removeAttribute('src');
+        els.itemImagePreview.hidden = true;
+      }
+    }
+
+    function updateItemImagePreview() {
+      const file = els.itemImage.files[0];
+      if (file) {
+        clearItemPreviewUrl();
+        state.itemPreviewUrl = URL.createObjectURL(file);
+        els.itemImagePreview.src = state.itemPreviewUrl;
+        els.itemImagePreview.hidden = false;
+        return;
+      }
+      setItemImagePreview(state.editingItem && state.editingItem.urls ? state.editingItem.urls.image : '');
+    }
+
+    function statusBadge(status) {
+      const clean = escapeHtml(status || 'pending');
+      const text = statusText[status] || status || '-';
+      return `<span class="badge rounded-pill status-badge status-${clean}">${escapeHtml(text)}</span>`;
+    }
+
+    async function request(path, options = {}) {
+      const headers = new Headers(options.headers || {});
+      headers.set('X-Auth-Token', AUTH_TOKEN);
+      const response = await fetch(path, { ...options, headers });
+      const contentType = response.headers.get('content-type') || '';
+      if (!response.ok) {
+        let detail = response.statusText;
+        if (contentType.includes('application/json')) {
+          const payload = await response.json();
+          detail = payload.detail || payload;
+        } else {
+          detail = await response.text();
+        }
+        throw { status: response.status, detail };
+      }
+      if (contentType.includes('application/json')) {
+        return response.json();
+      }
+      return response;
+    }
+
+    async function downloadFile(path, fallbackName) {
+      const response = await request(path);
+      const blob = await response.blob();
+      const disposition = response.headers.get('content-disposition') || '';
+      const match = disposition.match(/filename\*=UTF-8''([^;]+)|filename="?([^"]+)"?/i);
+      const filename = match ? decodeURIComponent(match[1] || match[2]) : fallbackName;
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    async function loadDatasets(selectId = state.selectedId) {
+      setMessage(els.listMessage, '正在加载...');
+      try {
+        const payload = await request('/datasets');
+        state.datasets = payload.datasets || [];
+        renderDatasetList();
+        setMessage(els.listMessage, state.datasets.length ? '' : '暂无数据集');
+
+        if (selectId && state.datasets.some(item => item.id === selectId)) {
+          await selectDataset(selectId);
+        } else if (state.datasets[0]) {
+          await selectDataset(state.datasets[0].id);
+        } else {
+          clearSelection();
+        }
+      } catch (error) {
+        showError(els.listMessage, error);
+      }
+    }
+
+    function renderDatasetList() {
+      els.datasetList.innerHTML = '';
+      for (const dataset of state.datasets) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = `dataset-row ${dataset.id === state.selectedId ? 'active' : ''}`;
+        button.innerHTML = `
+          <div class="d-flex align-items-center justify-content-between gap-2">
+            <div class="dataset-name">${escapeHtml(dataset.name)}</div>
+            ${statusBadge(dataset.status)}
+          </div>
+          <div class="small-muted">${dataset.item_count || 0} 条 · 完成 ${dataset.completed_count || 0} · ${formatDate(dataset.created_at)}</div>
+        `;
+        button.addEventListener('click', () => selectDataset(dataset.id));
+        els.datasetList.appendChild(button);
+      }
+    }
+
+    async function selectDataset(datasetId) {
+      state.selectedId = datasetId;
+      renderDatasetList();
+      setMessage(els.detailMessage, '正在加载数据集...');
+      try {
+        const payload = await request(`/datasets/${datasetId}`);
+        state.selected = payload.dataset;
+        setMessage(els.detailMessage, '');
+        renderSelectedDataset();
+        startOrStopPolling();
+      } catch (error) {
+        showError(els.detailMessage, error);
+      }
+    }
+
+    function clearSelection() {
+      state.selectedId = null;
+      state.selected = null;
+      state.editingItem = null;
+      renderSelectedDataset();
+    }
+
+    function renderSelectedDataset() {
+      const dataset = state.selected;
+      const items = dataset ? dataset.items || [] : [];
+      els.openItemBtn.disabled = !dataset;
+      els.copyDatasetBtn.disabled = !dataset;
+      els.deleteDatasetBtn.disabled = !dataset || dataset.status === 'recognizing';
+      els.recognizeDatasetBtn.disabled = !dataset || dataset.status === 'recognizing' || !items.length;
+      els.downloadDxfBtn.disabled = !dataset || !items.some(item => item.urls && item.urls.dxf);
+
+      if (!dataset) {
+        els.selectedTitle.textContent = '未选择数据集';
+        els.selectedMeta.textContent = '';
+        els.itemCount.textContent = '';
+        els.emptyItems.hidden = false;
+        els.itemsTableWrap.hidden = true;
+        els.itemsBody.innerHTML = '';
+        return;
+      }
+
+      els.selectedTitle.innerHTML = `<span class="me-2">${escapeHtml(dataset.name)}</span>${statusBadge(dataset.status)}`;
+      els.selectedMeta.textContent = `${dataset.item_count || 0} 条数据，完成 ${dataset.completed_count || 0}，失败 ${dataset.failed_count || 0}，创建于 ${formatDate(dataset.created_at)}`;
+      els.itemCount.textContent = `${items.length} 条`;
+      renderItems(items);
+    }
+
+    function renderItems(items) {
+      els.emptyItems.hidden = items.length > 0;
+      els.itemsTableWrap.hidden = items.length === 0;
+      els.itemsBody.innerHTML = '';
+      for (const item of items) {
+        const tr = document.createElement('tr');
+        const imageHtml = item.urls && item.urls.image
+          ? `<a href="${item.urls.image}" target="_blank"><img class="preview-image" src="${item.urls.image}" alt=""></a>`
+          : `<div class="small-muted">${escapeHtml(item.original_filename || '')}</div>`;
+        tr.innerHTML = `
+          <td>${imageHtml}</td>
+          <td>
+            <div class="fw-semibold">${escapeHtml(item.plate_no || item.original_filename || item.id)}</div>
+            <div class="small-muted">数量：${formatNumber(item.quantity)} · ${escapeHtml(item.material || '-')}${item.thickness_mm ? ` · ${item.thickness_mm} mm` : ''}</div>
+          </td>
+          <td>
+            <div>尺寸1/2：${formatNumber(item.dxf_target_size_1_mm)} / ${formatNumber(item.dxf_target_size_2_mm)}</div>
+            <div class="small-muted">x/y：${formatNumber(item.dxf_target_x_mm)} / ${formatNumber(item.dxf_target_y_mm)}</div>
+          </td>
+          <td>
+            <div>钢板透视：${item.use_plate_perspective ? '是' : '否'}</div>
+            <div>夹钳修复：${item.dxf_notch_fill_enabled ? '是' : '否'}</div>
+            <div class="small-muted">${formatNumber(item.dxf_notch_fill_max_width_mm)} x ${formatNumber(item.dxf_notch_fill_max_depth_mm)} mm</div>
+          </td>
+          <td>
+            ${statusBadge(item.status)}
+            <div class="small-muted mt-1">${item.progress || 0}% ${escapeHtml(item.message || '')}</div>
+          </td>
+          <td class="dxf-cell">${buildDxfCell(item)}</td>
+          <td>${buildOtherResultLinks(item)}</td>
+          <td>
+            <div class="btn-group btn-group-sm" role="group">
+              <button class="btn btn-outline-secondary" type="button" data-action="edit" data-id="${item.id}">编辑</button>
+              <button class="btn btn-outline-danger" type="button" data-action="delete" data-id="${item.id}">删除</button>
+            </div>
+          </td>
+        `;
+        els.itemsBody.appendChild(tr);
+      }
+    }
+
+    function buildDxfCell(item) {
+      const urls = item.urls || {};
+      const paths = item.paths || {};
+      if (!urls.dxf) {
+        return '<span class="small-muted">未生成</span>';
+      }
+      const name = basename(paths.dxf || 'plate.dxf');
+      const preview = urls.dxf_preview
+        ? `<a href="${urls.dxf_preview}" target="_blank"><img class="dxf-preview-image" src="${urls.dxf_preview}" alt="DXF 预览"></a>`
+        : '<div class="dxf-preview-placeholder">暂无预览</div>';
+      return `
+        <div class="dxf-result">
+          ${preview}
+          <div class="min-w-0">
+            <div class="dxf-name" title="${escapeHtml(name)}">${escapeHtml(name)}</div>
+          </div>
+          <div class="dxf-actions">
+            <a class="btn btn-outline-primary btn-sm" href="${urls.dxf}" target="_blank">打开 DXF</a>
+            ${urls.dxf_preview ? `<a class="btn btn-outline-secondary btn-sm" href="${urls.dxf_preview}" target="_blank">打开预览</a>` : ''}
+          </div>
+        </div>
+      `;
+    }
+
+    function buildOtherResultLinks(item) {
+      const urls = item.urls || {};
+      const links = [];
+      if (urls.result_json) links.push(`<a class="btn btn-outline-secondary btn-sm" href="${urls.result_json}" target="_blank">JSON</a>`);
+      const dims = item.plate_dimensions || {};
+      const dimension = dims.width_mm && dims.height_mm ? `<div class="small-muted mt-1">${formatNumber(dims.width_mm)} x ${formatNumber(dims.height_mm)} mm</div>` : '';
+      return `${links.length ? `<div class="d-flex flex-wrap gap-1">${links.join('')}</div>` : '<span class="small-muted">暂无</span>'}${dimension}`;
+    }
+
+    function openItemModal(item = null) {
+      state.editingItem = item;
+      els.itemModalTitle.textContent = item ? '编辑数据' : '新增数据';
+      els.imageHelp.textContent = item ? '不选择图片则保留原图。' : '新增数据必须选择图片。';
+      els.itemImage.value = '';
+      els.plateNo.value = item ? item.plate_no || '' : '';
+      els.quantity.value = item && item.quantity != null ? item.quantity : '';
+      els.material.value = item ? item.material || '' : '';
+      els.thickness.value = item && item.thickness_mm != null ? item.thickness_mm : '';
+      els.size1.value = item && item.dxf_target_size_1_mm != null ? item.dxf_target_size_1_mm : '';
+      els.size2.value = item && item.dxf_target_size_2_mm != null ? item.dxf_target_size_2_mm : '';
+      els.targetX.value = item && item.dxf_target_x_mm != null ? item.dxf_target_x_mm : '';
+      els.targetY.value = item && item.dxf_target_y_mm != null ? item.dxf_target_y_mm : '';
+      els.usePlatePerspective.checked = !!(item && item.use_plate_perspective);
+      els.notchEnabled.checked = !!(item && item.dxf_notch_fill_enabled);
+      els.notchWidth.value = item && item.dxf_notch_fill_max_width_mm != null ? item.dxf_notch_fill_max_width_mm : 80;
+      els.notchDepth.value = item && item.dxf_notch_fill_max_depth_mm != null ? item.dxf_notch_fill_max_depth_mm : 25;
+      setItemImagePreview(item && item.urls ? item.urls.image : '');
+      setMessage(els.itemFormMessage, '');
+      showModal('itemModal');
+    }
+
+    function collectItemFormData(requireImage) {
+      if (!state.selectedId) {
+        throw new Error('请先选择数据集');
+      }
+      const form = new FormData();
+      const file = els.itemImage.files[0];
+      if (file) {
+        form.append('image', file);
+      } else if (requireImage) {
+        throw new Error('请上传图片');
+      }
+      appendValue(form, 'plate_no', els.plateNo.value);
+      appendValue(form, 'quantity', els.quantity.value);
+      appendValue(form, 'material', els.material.value);
+      appendValue(form, 'thickness_mm', els.thickness.value);
+      appendValue(form, 'dxf_target_size_1_mm', els.size1.value);
+      appendValue(form, 'dxf_target_size_2_mm', els.size2.value);
+      appendValue(form, 'dxf_target_x_mm', els.targetX.value);
+      appendValue(form, 'dxf_target_y_mm', els.targetY.value);
+      form.append('use_plate_perspective', els.usePlatePerspective.checked ? 'true' : 'false');
+      form.append('dxf_notch_fill_enabled', els.notchEnabled.checked ? 'true' : 'false');
+      appendValue(form, 'dxf_notch_fill_max_width_mm', els.notchWidth.value || '80');
+      appendValue(form, 'dxf_notch_fill_max_depth_mm', els.notchDepth.value || '25');
+      return form;
+    }
+
+    function appendValue(form, key, value) {
+      form.append(key, value == null ? '' : String(value).trim());
+    }
+
+    async function saveItem(event) {
+      event.preventDefault();
+      setMessage(els.itemFormMessage, '正在保存...');
+      try {
+        const isEdit = !!state.editingItem;
+        const form = collectItemFormData(!isEdit);
+        const path = isEdit
+          ? `/datasets/${state.selectedId}/items/${state.editingItem.id}`
+          : `/datasets/${state.selectedId}/items`;
+        const method = isEdit ? 'PUT' : 'POST';
+        const payload = await request(path, { method, body: form });
+        state.selected = payload.dataset;
+        renderSelectedDataset();
+        hideModal('itemModal');
+        await loadDatasets(state.selectedId);
+      } catch (error) {
+        showError(els.itemFormMessage, error);
+      }
+    }
+
+    async function createDataset(event) {
+      event.preventDefault();
+      els.datasetName.classList.remove('is-invalid');
+      els.datasetNameError.textContent = '';
+      const form = new FormData();
+      form.append('name', els.datasetName.value.trim());
+      try {
+        const payload = await request('/datasets', { method: 'POST', body: form });
+        els.datasetName.value = '';
+        hideModal('datasetModal');
+        await loadDatasets(payload.dataset.id);
+      } catch (error) {
+        els.datasetName.classList.add('is-invalid');
+        els.datasetNameError.textContent = String(error.detail || error || '创建失败');
+      }
+    }
+
+    async function importExcelFile(file) {
+      if (!file) return;
+      const form = new FormData();
+      form.append('excel', file);
+      form.append('name', '');
+      setMessage(els.listMessage, '正在导入 Excel...');
+      try {
+        const payload = await request('/datasets/import-excel', { method: 'POST', body: form });
+        els.excelFile.value = '';
+        await loadDatasets(payload.dataset.id);
+        setMessage(els.listMessage, 'Excel 导入完成', 'success');
+      } catch (error) {
+        showError(els.listMessage, error);
+      }
+    }
+
+    async function copySelectedDataset() {
+      if (!state.selectedId) return;
+      setMessage(els.detailMessage, '正在复制...');
+      try {
+        const payload = await request(`/datasets/${state.selectedId}/copy`, { method: 'POST', body: new FormData() });
+        await loadDatasets(payload.dataset.id);
+        setMessage(els.detailMessage, '已复制', 'success');
+      } catch (error) {
+        showError(els.detailMessage, error);
+      }
+    }
+
+    async function deleteSelectedDataset() {
+      if (!state.selectedId || !state.selected) return;
+      if (!window.confirm(`确认删除数据集“${state.selected.name}”？`)) return;
+      setMessage(els.detailMessage, '正在删除...');
+      try {
+        await request(`/datasets/${state.selectedId}`, { method: 'DELETE' });
+        const currentIndex = state.datasets.findIndex(item => item.id === state.selectedId);
+        const nextDataset = state.datasets[currentIndex + 1] || state.datasets[currentIndex - 1];
+        await loadDatasets(nextDataset ? nextDataset.id : null);
+      } catch (error) {
+        showError(els.detailMessage, error);
+      }
+    }
+
+    async function recognizeSelectedDataset() {
+      if (!state.selectedId) return;
+      setMessage(els.detailMessage, '已提交识别任务...');
+      try {
+        const payload = await request(`/datasets/${state.selectedId}/recognize`, { method: 'POST' });
+        state.selected = payload.dataset;
+        renderSelectedDataset();
+        startOrStopPolling();
+      } catch (error) {
+        showError(els.detailMessage, error);
+      }
+    }
+
+    async function deleteItem(itemId) {
+      if (!state.selectedId) return;
+      if (!window.confirm('确认删除这条数据？')) return;
+      try {
+        const payload = await request(`/datasets/${state.selectedId}/items/${itemId}`, { method: 'DELETE' });
+        state.selected = payload.dataset;
+        renderSelectedDataset();
+        await loadDatasets(state.selectedId);
+      } catch (error) {
+        showError(els.detailMessage, error);
+      }
+    }
+
+    function startOrStopPolling() {
+      if (state.pollTimer) {
+        clearInterval(state.pollTimer);
+        state.pollTimer = null;
+      }
+      if (state.selected && state.selected.status === 'recognizing') {
+        state.pollTimer = setInterval(async () => {
+          try {
+            const payload = await request(`/datasets/${state.selectedId}`);
+            state.selected = payload.dataset;
+            renderSelectedDataset();
+            if (state.selected.status !== 'recognizing') {
+              startOrStopPolling();
+              await loadDatasets(state.selectedId);
+            }
+          } catch (error) {
+            showError(els.detailMessage, error);
+            startOrStopPolling();
+          }
+        }, 2000);
+      }
+    }
+
+    function formatDate(value) {
+      if (!value) return '';
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return value;
+      return date.toLocaleString();
+    }
+
+    function formatNumber(value) {
+      if (value === null || value === undefined || value === '') return '-';
+      const number = Number(value);
+      if (!Number.isFinite(number)) return String(value);
+      return Number.isInteger(number) ? String(number) : number.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
+    }
+
+    function basename(value) {
+      return String(value || '').split(/[\\/]/).filter(Boolean).pop() || '';
+    }
+
+    function escapeHtml(value) {
+      return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    els.refreshBtn.addEventListener('click', () => loadDatasets());
+    els.openCreateDatasetBtn.addEventListener('click', () => {
+      els.datasetName.value = '';
+      els.datasetName.classList.remove('is-invalid');
+      els.datasetNameError.textContent = '';
+      showModal('datasetModal');
+      setTimeout(() => els.datasetName.focus(), 0);
+    });
+    els.uploadExcelBtn.addEventListener('click', () => els.excelFile.click());
+    els.excelFile.addEventListener('change', () => importExcelFile(els.excelFile.files[0]));
+    els.createDatasetForm.addEventListener('submit', createDataset);
+    els.downloadTemplateBtn.addEventListener('click', () => downloadFile('/datasets/excel-template', 'dataset_template.xlsx').catch(error => showError(els.listMessage, error)));
+    els.openItemBtn.addEventListener('click', () => openItemModal(null));
+    els.copyDatasetBtn.addEventListener('click', copySelectedDataset);
+    els.deleteDatasetBtn.addEventListener('click', deleteSelectedDataset);
+    els.recognizeDatasetBtn.addEventListener('click', recognizeSelectedDataset);
+    els.downloadDxfBtn.addEventListener('click', () => {
+      if (!state.selectedId) return;
+      downloadFile(`/datasets/${state.selectedId}/download-dxf`, `${state.selected.name}_dxf.zip`).catch(error => showError(els.detailMessage, error));
+    });
+    els.itemImage.addEventListener('change', updateItemImagePreview);
+    els.itemForm.addEventListener('submit', saveItem);
+    els.itemsBody.addEventListener('click', (event) => {
+      const button = event.target.closest('button[data-action]');
+      if (!button || !state.selected) return;
+      const item = state.selected.items.find(row => row.id === button.dataset.id);
+      if (button.dataset.action === 'edit' && item) {
+        openItemModal(item);
+      }
+      if (button.dataset.action === 'delete') {
+        deleteItem(button.dataset.id);
+      }
+    });
+    document.addEventListener('click', (event) => {
+      const closeButton = event.target.closest('[data-close-modal]');
+      if (closeButton) {
+        hideModal(closeButton.dataset.closeModal);
+      }
+      if (event.target.classList.contains('modal')) {
+        hideModal(event.target.id);
+      }
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        document.querySelectorAll('.modal.show').forEach(modal => hideModal(modal.id));
+      }
+    });
+
+    loadDatasets();
+  </script>
+</body>
+</html>
