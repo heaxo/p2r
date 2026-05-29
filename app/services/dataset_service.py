@@ -218,7 +218,7 @@ class DatasetService:
                 dxf_target_size_2_mm=item.get("dxf_target_size_2_mm"),
                 dxf_target_x_mm=item.get("dxf_target_x_mm"),
                 dxf_target_y_mm=item.get("dxf_target_y_mm"),
-                paper_source=item.get("paper_source") or "yolo",
+                paper_source=item.get("paper_source") or "sam2",
                 a4_orientation=item.get("a4_orientation") or "auto",
                 use_plate_perspective=bool(item.get("use_plate_perspective")),
                 dxf_notch_fill_enabled=bool(item.get("dxf_notch_fill_enabled")),
@@ -393,7 +393,8 @@ class DatasetService:
             ("尺寸2", "可选。不指定方向；尺寸1和尺寸2必须同时填写。"),
             ("x", "可选，单位 mm。明确指定 DXF X 方向目标尺寸。为空时优先使用尺寸1/尺寸2。"),
             ("y", "可选，单位 mm。明确指定 DXF Y 方向目标尺寸。为空时优先使用尺寸1/尺寸2。"),
-            ("A4纸方向", "可选，默认 auto。用于指定A4纸在矫正后对应的毫米方向：auto 自动判断；x轴边297mm y轴边210mm；x轴边210mm y轴边297mm。拍摄角度导致系统判断错误时填写。"),
+            ("A4纸识别", "可选，默认 标准识别。可填写 标准识别 或 训练集识别。"),
+            ("A4纸方向", "可选，默认 auto。填写 auto、x297 或 x210。x297 表示 A4 纸的 X 轴边为 297mm；x210 表示 X 轴边为 210mm。拍摄角度导致系统判断错误时填写。"),
             ("是否启用钢板透视", "填写 是/否、true/false 或 1/0。启用后以钢板轮廓做透视矫正。"),
             ("是否启用夹钳修复", "填写 是/否、true/false 或 1/0。启用后修复夹钳造成的边缘凹陷。"),
             ("夹钳修复最大宽度mm", "可选，默认 80。夹钳凹陷最大宽度，单位 mm。"),
@@ -408,14 +409,17 @@ class DatasetService:
 
         bool_validation = DataValidation(type="list", formula1='"是,否"', allow_blank=True)
         sheet.add_data_validation(bool_validation)
+        paper_source_validation = DataValidation(type="list", formula1='"标准识别,训练集识别"', allow_blank=True)
+        sheet.add_data_validation(paper_source_validation)
         orientation_validation = DataValidation(
             type="list",
-            formula1='"auto,x轴边297mm y轴边210mm,x轴边210mm y轴边297mm"',
+            formula1='"auto,x297,x210"',
             allow_blank=True,
         )
         sheet.add_data_validation(orientation_validation)
-        orientation_validation.add("J2:J2000")
-        bool_validation.add("K2:L2000")
+        paper_source_validation.add("J2:J2000")
+        orientation_validation.add("K2:K2000")
+        bool_validation.add("L2:M2000")
         sheet.freeze_panes = "A2"
 
         buffer = io.BytesIO()
@@ -831,6 +835,11 @@ class DatasetService:
             "尺寸2": "dxf_target_size_2_mm",
             "x": "dxf_target_x_mm",
             "y": "dxf_target_y_mm",
+            "a4纸识别": "paper_source",
+            "a4识别": "paper_source",
+            "a4纸来源": "paper_source",
+            "纸张识别": "paper_source",
+            "纸张来源": "paper_source",
             "a4纸方向": "a4_orientation",
             "a4方向": "a4_orientation",
             "纸张方向": "a4_orientation",
@@ -1002,10 +1011,10 @@ class DatasetService:
     def _normalize_paper_source(self, value: Any) -> str:
         text = self._as_text(value).lower()
         if not text:
+            return "sam2"
+        if text in {"yolo", "training", "train", "trained", "dataset", "训练", "训练集", "训练集识别"}:
             return "yolo"
-        if text in {"yolo", "training", "train", "trained", "dataset"}:
-            return "yolo"
-        if text in {"sam2", "standard", "std"}:
+        if text in {"sam2", "standard", "std", "标准", "标准识别"}:
             return "sam2"
         raise ValueError("A4纸来源参数不正确")
 
@@ -1016,10 +1025,20 @@ class DatasetService:
         compact = text.replace(" ", "").replace("_", "").replace("-", "")
         if compact in {"auto", "自动", "自动判断", "自动识别"}:
             return "auto"
+        if compact.startswith("x") and "297" in compact and "210" not in compact:
+            return "landscape"
+        if compact.startswith("x") and "210" in compact and "297" not in compact:
+            return "portrait"
         if compact in {
             "landscape",
             "横向",
             "横版",
+            "x297",
+            "x轴297",
+            "x边297",
+            "x轴边297",
+            "x轴边297mm",
+            "x边297mm",
             "x297y210",
             "x轴边297mmy轴边210mm",
             "x边297mmy边210mm",
@@ -1033,6 +1052,12 @@ class DatasetService:
             "纵向",
             "竖向",
             "竖版",
+            "x210",
+            "x轴210",
+            "x边210",
+            "x轴边210",
+            "x轴边210mm",
+            "x边210mm",
             "x210y297",
             "x轴边210mmy轴边297mm",
             "x边210mmy边297mm",
@@ -1041,7 +1066,7 @@ class DatasetService:
             "210*297",
         }:
             return "portrait"
-        raise ValueError("A4纸方向参数不正确，请填写 auto、x轴边297mm y轴边210mm 或 x轴边210mm y轴边297mm")
+        raise ValueError("A4纸方向参数不正确，请填写 auto、x297 或 x210")
 
     def _optional_positive_float(self, value: Any, field_name: str, default: float | None = None) -> float | None:
         if value is None:

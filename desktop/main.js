@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, shell, Menu } = require('electron');
+const { app, BrowserWindow, dialog, shell, Menu, Tray } = require('electron');
 const fs = require('fs');
 const http = require('http');
 const net = require('net');
@@ -7,12 +7,19 @@ const { spawn } = require('child_process');
 
 app.setName('Pic2Remnant');
 
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+}
+
 let mainWindow = null;
 let startupWindow = null;
+let tray = null;
 let backendProcess = null;
 let backendPort = null;
 let licenseUsable = false;
 let licenseMonitor = null;
+let isQuitting = false;
 let startupProgress = 1;
 let startupTargetProgress = 1;
 let startupMessage = '正在启动...';
@@ -35,6 +42,46 @@ function loadUiPage(page) {
     return;
   }
   mainWindow.loadURL(appUrl(page));
+}
+
+function showMainWindow() {
+  if (!mainWindow) {
+    if (backendPort) {
+      createWindow();
+    }
+    return;
+  }
+
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function createTray() {
+  if (tray) {
+    return;
+  }
+
+  tray = new Tray(path.join(__dirname, 'icon.ico'));
+  tray.setToolTip('Pic2Remnant');
+  tray.setContextMenu(Menu.buildFromTemplate([
+    {
+      label: '打开',
+      click: showMainWindow,
+    },
+    { type: 'separator' },
+    {
+      label: '退出',
+      click: () => {
+        isQuitting = true;
+        stopBackend();
+        app.quit();
+      },
+    },
+  ]));
+  tray.on('double-click', showMainWindow);
 }
 
 function startupHtml(percent, message) {
@@ -311,7 +358,7 @@ function createAppMenu() {
     {
       label: '功能',
       submenu: [
-        {
+        /*{
           label: '数据集',
           accelerator: 'Ctrl+1',
           click: () => loadUiPage('datasets.html'),
@@ -320,7 +367,7 @@ function createAppMenu() {
           label: '批量识别',
           accelerator: 'Ctrl+2',
           click: () => loadUiPage(''),
-        },
+        },*/
         { type: 'separator' },
         {
           label: '退出',
@@ -555,6 +602,13 @@ function createWindow() {
     mainWindow.show();
     closeStartupWindow();
   });
+  mainWindow.on('close', (event) => {
+    if (isQuitting) {
+      return;
+    }
+    event.preventDefault();
+    mainWindow.hide();
+  });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: 'deny' };
@@ -579,6 +633,7 @@ function stopBackend() {
 
 app.whenReady().then(async () => {
   try {
+    createTray();
     createStartupWindow();
     await startBackend(updateStartupWindow);
     updateStartupWindow(92, '正在检查使用权限...');
@@ -593,17 +648,21 @@ app.whenReady().then(async () => {
   }
 });
 
+app.on('second-instance', () => {
+  showMainWindow();
+});
+
 app.on('window-all-closed', () => {
-  stopBackend();
-  if (process.platform !== 'darwin') {
-    app.quit();
+  if (isQuitting) {
+    stopBackend();
   }
 });
 
-app.on('before-quit', stopBackend);
+app.on('before-quit', () => {
+  isQuitting = true;
+  stopBackend();
+});
 
 app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0 && backendPort) {
-    createWindow();
-  }
+  showMainWindow();
 });

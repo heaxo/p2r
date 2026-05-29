@@ -1133,8 +1133,57 @@ def apply_paper_fill_to_plate_mask(plate_mask: np.ndarray, paper_mask: Optional[
     if paper_bin.shape != plate_bin.shape:
         paper_bin = cv2.resize(paper_bin.astype(np.uint8), (plate_bin.shape[1], plate_bin.shape[0]), interpolation=cv2.INTER_NEAREST) > 0
     added = paper_bin & (~plate_bin)
-    final_bin = plate_bin | paper_bin
-    return final_bin.astype(np.uint8) * 255, {"filled": True, "paper_area": int(paper_bin.sum()), "added_area": int(added.sum()), "reason": "ok"}
+    plate_u8 = plate_bin.astype(np.uint8)
+    paper_u8 = paper_bin.astype(np.uint8)
+
+    final_u8 = _finalize_plate_fill_mask(plate_u8 | paper_u8)
+    final_summary = _component_summary(final_u8)
+    paper_outside_largest = _mask_area_outside_largest_contour(final_u8, paper_u8)
+    used_paper_dilate_kernel = 0
+    bridge_info: Dict[str, Any] = {"bridged": False}
+
+    if int(added.sum()) > 0 and int(paper_outside_largest) > 0:
+        dilate_k = _odd_kernel_size(PAPER_FILL_DILATE_KERNEL, min_value=1)
+        if dilate_k > 0:
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (dilate_k, dilate_k))
+            paper_dilated = cv2.dilate(paper_u8, kernel, iterations=1)
+            retry_u8 = _finalize_plate_fill_mask(plate_u8 | paper_dilated)
+            retry_summary = _component_summary(retry_u8)
+            retry_paper_outside_largest = _mask_area_outside_largest_contour(retry_u8, paper_u8)
+            if (
+                int(retry_paper_outside_largest) < int(paper_outside_largest)
+                or int(retry_summary["component_count"]) < int(final_summary["component_count"])
+                or int(retry_summary["largest_area"]) > int(final_summary["largest_area"])
+            ):
+                final_u8 = retry_u8
+                final_summary = retry_summary
+                paper_outside_largest = retry_paper_outside_largest
+                used_paper_dilate_kernel = int(dilate_k)
+
+    if int(added.sum()) > 0 and int(paper_outside_largest) > 0:
+        bridged_u8, bridge_info = _bridge_reference_to_largest_component(final_u8, paper_u8)
+        bridge_paper_outside_largest = _mask_area_outside_largest_contour(bridged_u8, paper_u8)
+        if int(bridge_paper_outside_largest) < int(paper_outside_largest):
+            final_u8 = bridged_u8
+            final_summary = _component_summary(final_u8)
+            paper_outside_largest = bridge_paper_outside_largest
+        elif bridge_info.get("bridged"):
+            bridge_info = {"bridged": False, "reason": "bridge_did_not_reduce_outside_area"}
+
+    final_added = (final_u8 > 0) & (~plate_bin)
+    return final_u8.astype(np.uint8) * 255, {
+        "filled": True,
+        "paper_area": int(paper_bin.sum()),
+        "added_area": int(added.sum()),
+        "final_added_area": int(final_added.sum()),
+        "component_count": int(final_summary["component_count"]),
+        "largest_component_area": int(final_summary["largest_area"]),
+        "paper_outside_largest_contour_area": int(paper_outside_largest),
+        "paper_dilate_kernel": int(used_paper_dilate_kernel),
+        "close_kernel": int(_odd_kernel_size(PAPER_FILL_CLOSE_KERNEL, min_value=1)),
+        "bridge": bridge_info,
+        "reason": "ok",
+    }
 
 
 # =========================
@@ -1144,6 +1193,115 @@ def _binary_mask(mask: Optional[np.ndarray]) -> np.ndarray:
     if mask is None or mask.size == 0:
         return np.zeros((1, 1), dtype=np.uint8)
     return (mask > 0).astype(np.uint8)
+
+
+def _component_summary(bin_mask: np.ndarray) -> Dict[str, int]:
+    src = (_binary_mask(bin_mask) > 0).astype(np.uint8)
+    if src.size == 0 or int(src.sum()) <= 0:
+        return {"component_count": 0, "largest_area": 0}
+    num_labels, _, stats, _ = cv2.connectedComponentsWithStats(src, connectivity=8)
+    if num_labels <= 1:
+        return {"component_count": 0, "largest_area": 0}
+    areas = stats[1:, cv2.CC_STAT_AREA]
+    return {"component_count": int(num_labels - 1), "largest_area": int(np.max(areas))}
+
+
+def _finalize_plate_fill_mask(bin_mask: np.ndarray) -> np.ndarray:
+    out = (_binary_mask(bin_mask) > 0).astype(np.uint8)
+    if out.size == 0 or int(out.sum()) <= 0:
+        return out
+    close_k = _odd_kernel_size(PAPER_FILL_CLOSE_KERNEL, min_value=1)
+    if close_k > 0:
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (close_k, close_k))
+        out = cv2.morphologyEx(out, cv2.MORPH_CLOSE, kernel)
+    out = _fill_holes_in_binary_mask(out)
+    return (out > 0).astype(np.uint8)
+
+
+def _mask_area_outside_largest_contour(bin_mask: np.ndarray, reference_mask: np.ndarray) -> int:
+    src = (_binary_mask(bin_mask) > 0).astype(np.uint8)
+    ref = (_binary_mask(reference_mask) > 0)
+    if src.shape != ref.shape:
+        ref = cv2.resize(ref.astype(np.uint8), (src.shape[1], src.shape[0]), interpolation=cv2.INTER_NEAREST) > 0
+    if src.size == 0 or int(src.sum()) <= 0:
+        return int(ref.sum())
+    contours, _ = cv2.findContours(src, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    if not contours:
+        return int(ref.sum())
+    largest = max(contours, key=cv2.contourArea)
+    filled = np.zeros_like(src, dtype=np.uint8)
+    cv2.drawContours(filled, [largest], -1, 1, thickness=-1)
+    return int((ref & (filled == 0)).sum())
+
+
+def _largest_component_mask(bin_mask: np.ndarray) -> np.ndarray:
+    src = (_binary_mask(bin_mask) > 0).astype(np.uint8)
+    if src.size == 0 or int(src.sum()) <= 0:
+        return src
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(src, connectivity=8)
+    if num_labels <= 1:
+        return src
+    largest_label = int(np.argmax(stats[1:, cv2.CC_STAT_AREA]) + 1)
+    return (labels == largest_label).astype(np.uint8)
+
+
+def _bridge_reference_to_largest_component(bin_mask: np.ndarray, reference_mask: np.ndarray) -> Tuple[np.ndarray, Dict[str, Any]]:
+    src = (_binary_mask(bin_mask) > 0).astype(np.uint8)
+    ref = (_binary_mask(reference_mask) > 0)
+    if src.shape != ref.shape:
+        ref = cv2.resize(ref.astype(np.uint8), (src.shape[1], src.shape[0]), interpolation=cv2.INTER_NEAREST) > 0
+
+    largest_comp = _largest_component_mask(src)
+    if largest_comp.size == 0 or int(largest_comp.sum()) <= 0:
+        return src, {"bridged": False, "reason": "no_largest_component"}
+
+    contours, _ = cv2.findContours(largest_comp, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    if not contours:
+        return src, {"bridged": False, "reason": "no_largest_contour"}
+    largest_contour = max(contours, key=cv2.contourArea)
+    largest_filled = np.zeros_like(src, dtype=np.uint8)
+    cv2.drawContours(largest_filled, [largest_contour], -1, 1, thickness=-1)
+
+    outside_ref = ref & (largest_filled == 0) & (src > 0)
+    ys, xs = np.where(outside_ref)
+    if len(xs) == 0:
+        return src, {"bridged": False, "reason": "reference_already_inside_largest_contour"}
+
+    inv_largest = np.where(largest_comp > 0, 0, 1).astype(np.uint8)
+    dist = cv2.distanceTransform(inv_largest, cv2.DIST_L2, 5)
+    distances = dist[ys, xs]
+    idx = int(np.argmin(distances))
+    paper_point = (int(xs[idx]), int(ys[idx]))
+    gap_px = float(distances[idx])
+
+    h, w = src.shape[:2]
+    max_gap_px = float(max(40, min(80, int(round(min(h, w) * 0.03)))))
+    if gap_px > max_gap_px:
+        return src, {
+            "bridged": False,
+            "reason": "gap_too_large",
+            "gap_px": round(gap_px, 3),
+            "max_gap_px": round(max_gap_px, 3),
+        }
+
+    boundary_points = largest_contour.reshape(-1, 2)
+    deltas = boundary_points.astype(np.float32) - np.array(paper_point, dtype=np.float32)
+    nearest_idx = int(np.argmin(np.sum(deltas * deltas, axis=1)))
+    plate_point = tuple(int(v) for v in boundary_points[nearest_idx])
+
+    bridged = src.copy()
+    thickness = max(3, int(_odd_kernel_size(PAPER_FILL_CLOSE_KERNEL, min_value=1)))
+    cv2.line(bridged, paper_point, plate_point, 1, thickness=thickness, lineType=cv2.LINE_8)
+    bridged = _finalize_plate_fill_mask(bridged)
+
+    return bridged, {
+        "bridged": True,
+        "gap_px": round(gap_px, 3),
+        "max_gap_px": round(max_gap_px, 3),
+        "thickness_px": int(thickness),
+        "paper_point": [int(paper_point[0]), int(paper_point[1])],
+        "plate_point": [int(plate_point[0]), int(plate_point[1])],
+    }
 
 
 def _largest_contour_from_mask(mask: np.ndarray) -> Optional[np.ndarray]:

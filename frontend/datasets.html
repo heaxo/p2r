@@ -536,6 +536,22 @@
       padding-right: 8px;
     }
 
+    .btn-loading-spinner {
+      width: 13px;
+      height: 13px;
+      display: inline-block;
+      border: 2px solid currentColor;
+      border-right-color: transparent;
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
     .modal {
       background: rgba(15, 23, 42, .34);
     }
@@ -655,7 +671,7 @@
         </div>
         <nav class="app-nav" aria-label="页面导航">
           <a class="active" href="/ui/datasets.html">数据集</a>
-          <a href="/ui/">批量识别</a>
+<!--          <a href="/ui/">批量识别</a>-->
         </nav>
       </div>
     </header>
@@ -720,10 +736,10 @@
                   <tr>
                     <th class="image-col">图片</th>
                     <th class="plate-col">板材信息</th>
-                    <th class="dimension-col">尺寸设置</th>
-                    <th class="recognition-col">识别参数</th>
                     <th class="status-col">状态</th>
                     <th class="dxf-col">DXF</th>
+                    <th class="dimension-col">尺寸设置</th>
+                    <th class="recognition-col">识别参数</th>
                     <th class="result-col">其他结果</th>
                     <th class="actions-col">操作</th>
                   </tr>
@@ -843,10 +859,10 @@
                 <label for="a4Orientation" class="form-label">A4纸毫米方向</label>
                 <select id="a4Orientation" class="form-select">
                   <option value="auto">自动判断</option>
-                  <option value="landscape">x轴边297mm，y轴边210mm</option>
-                  <option value="portrait">x轴边210mm，y轴边297mm</option>
+                  <option value="landscape">x297</option>
+                  <option value="portrait">x210</option>
                 </select>
-                <div class="form-text">当拍摄角度导致A4方向自动判断错误时，手动指定A4纸对应到DXF坐标轴的毫米方向。</div>
+                <div class="form-text">当自动判断错误时，指定 A4 纸在 DXF 坐标中的 X 轴边长度。</div>
               </div>
               <div class="col-6 col-md-2">
                 <label for="notchWidth" class="form-label">夹钳宽度 mm</label>
@@ -1029,8 +1045,8 @@
     }
 
     function a4OrientationLabel(value) {
-      if (value === 'landscape') return 'x轴边297mm，y轴边210mm';
-      if (value === 'portrait') return 'x轴边210mm，y轴边297mm';
+      if (value === 'landscape') return 'x297';
+      if (value === 'portrait') return 'x210';
       return '自动判断';
     }
 
@@ -1177,17 +1193,17 @@
             <div class="fw-semibold plate-title" title="${escapeHtml(item.plate_no || item.original_filename || item.id)}">${escapeHtml(item.plate_no || item.original_filename || item.id)}</div>
             <div class="small-muted">数量：${formatNumber(item.quantity)} · ${escapeHtml(item.material || '-')}${item.thickness_mm ? ` · ${item.thickness_mm} mm` : ''}</div>
           </td>
+          <td class="status-col">
+            ${statusBadge(item.status)}
+            <div class="small-muted mt-1">${item.progress || 0}% ${escapeHtml(item.message || '')}</div>
+          </td>
+          <td class="dxf-col dxf-cell">${buildDxfCell(item)}</td>
           <td class="dimension-col">
             ${buildDimensionsCell(item)}
           </td>
           <td class="recognition-col">
             ${buildRecognitionParamsCell(item)}
           </td>
-          <td class="status-col">
-            ${statusBadge(item.status)}
-            <div class="small-muted mt-1">${item.progress || 0}% ${escapeHtml(item.message || '')}</div>
-          </td>
-          <td class="dxf-col dxf-cell">${buildDxfCell(item)}</td>
           <td class="result-col">${buildOtherResultLinks(item)}</td>
           <td class="actions-col actions-cell">
             <div class="item-actions">
@@ -1409,6 +1425,8 @@
       form.append('excel', file);
       form.append('name', '');
       setMessage(els.listMessage, '正在导入 Excel...');
+      setButtonLoading(els.uploadExcelBtn, true, '正在上传...');
+      els.downloadTemplateBtn.disabled = true;
       try {
         const payload = await request('/datasets/import-excel', { method: 'POST', body: form });
         els.excelFile.value = '';
@@ -1416,6 +1434,9 @@
         setMessage(els.listMessage, 'Excel 导入完成', 'success');
       } catch (error) {
         showError(els.listMessage, error);
+      } finally {
+        setButtonLoading(els.uploadExcelBtn, false);
+        els.downloadTemplateBtn.disabled = false;
       }
     }
 
@@ -1681,6 +1702,17 @@
       setButtonIcon(document.querySelector('#createDatasetForm button[type="submit"]'), 'plus');
       setButtonIcon(document.querySelector('#importSettingsForm button[type="submit"]'), 'save');
       document.querySelectorAll('[data-close-modal]:not(.btn-close)').forEach(button => setButtonIcon(button, 'x'));
+    }
+
+    function setButtonLoading(button, loading, text) {
+      if (!button) return;
+      if (!button.dataset.idleHtml) {
+        button.dataset.idleHtml = button.innerHTML;
+      }
+      button.disabled = !!loading;
+      button.innerHTML = loading
+        ? `<span class="btn-loading-spinner" aria-hidden="true"></span>${escapeHtml(text || '处理中...')}`
+        : button.dataset.idleHtml;
     }
 
     function escapeHtml(value) {
