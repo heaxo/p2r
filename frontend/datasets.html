@@ -125,6 +125,8 @@
       min-height: 0;
       overflow: auto;
       padding: 8px;
+      scrollbar-width: thin;
+      scrollbar-color: #9aa9bd #eef2f7;
     }
 
     .dataset-row {
@@ -204,11 +206,38 @@
     .table-wrap {
       min-height: 0;
       overflow: auto;
+      scrollbar-width: thin;
+      scrollbar-color: #9aa9bd #eef2f7;
+    }
+
+    .table-wrap::-webkit-scrollbar,
+    .dataset-list::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+
+    .table-wrap::-webkit-scrollbar-track,
+    .dataset-list::-webkit-scrollbar-track {
+      background: #eef2f7;
+      border-radius: 999px;
+    }
+
+    .table-wrap::-webkit-scrollbar-thumb,
+    .dataset-list::-webkit-scrollbar-thumb {
+      background: #9aa9bd;
+      border: 2px solid #eef2f7;
+      border-radius: 999px;
+    }
+
+    .table-wrap::-webkit-scrollbar-thumb:hover,
+    .dataset-list::-webkit-scrollbar-thumb:hover {
+      background: #718096;
     }
 
     .data-table {
-      min-width: 1180px;
+      min-width: 2820px;
       margin-bottom: 0;
+      table-layout: fixed;
     }
 
     .data-table th {
@@ -224,6 +253,137 @@
     .data-table td {
       vertical-align: top;
       border-color: var(--app-border);
+      line-height: 1.25;
+      padding: 6px 8px;
+    }
+
+    .data-table .image-col {
+      width: 96px;
+    }
+
+    .data-table .plate-col {
+      width: 210px;
+    }
+
+    .data-table .dimension-col {
+      width: 880px;
+    }
+
+    .data-table .recognition-col {
+      width: 560px;
+    }
+
+    .data-table .status-col {
+      width: 170px;
+    }
+
+    .data-table .dxf-col {
+      width: 420px;
+    }
+
+    .data-table .result-col {
+      width: 110px;
+    }
+
+    .data-table .actions-col,
+    .data-table .actions-cell {
+      width: 300px;
+      position: sticky;
+      right: 0;
+      z-index: 3;
+      background: #fff;
+      box-shadow: -8px 0 12px -12px rgba(15, 23, 42, .45);
+    }
+
+    .data-table .actions-col {
+      z-index: 5;
+      background: #f8fafc;
+    }
+
+    .plate-title {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .item-actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-start;
+      gap: 6px;
+    }
+
+    .item-actions .btn,
+    .result-links .btn,
+    .dxf-actions .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      white-space: nowrap;
+      flex: 0 0 auto;
+    }
+
+    .item-actions .btn {
+      min-height: 28px;
+      padding: 3px 8px;
+      font-size: 12px;
+      line-height: 1.2;
+    }
+
+    .item-actions .icon-svg,
+    .result-links .icon-svg,
+    .dxf-actions .icon-svg {
+      flex: 0 0 auto;
+      margin-right: 0;
+    }
+
+    .dimension-grid,
+    .params-grid {
+      display: grid;
+      column-gap: 18px;
+      row-gap: 2px;
+      align-items: start;
+    }
+
+    .dimension-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .params-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .attribute-stack {
+      min-width: 0;
+      display: grid;
+      gap: 2px;
+    }
+
+    .attribute-line {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      word-break: break-all;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .attribute-label {
+      display: inline-block;
+      width: 58px;
+      color: var(--app-muted);
+      text-align-last: justify;
+    }
+
+    .attribute-label.large {
+      width: 72px;
+    }
+
+    .attribute-value {
+      color: var(--app-text);
+      font-weight: 500;
     }
 
     .small-muted {
@@ -335,6 +495,7 @@
       margin-right: 5px;
       vertical-align: -2px;
       stroke-width: 2.2;
+      flex-shrink: 0;
     }
 
     .btn-icon .icon-svg {
@@ -394,8 +555,7 @@
     }
 
     .dxf-cell {
-      min-width: 290px;
-      max-width: 360px;
+      min-width: 0;
     }
 
     .dxf-result {
@@ -555,17 +715,17 @@
             </div>
             <div id="emptyItems" class="empty-state">请选择左侧数据集，或新建数据集后录入数据。</div>
             <div id="itemsTableWrap" class="table-wrap" hidden>
-              <table class="table table-hover table-sm data-table align-middle">
+              <table class="table table-hover table-sm data-table">
                 <thead>
                   <tr>
-                    <th style="width: 96px;">图片</th>
-                    <th>板材信息</th>
-                    <th>尺寸设置</th>
-                    <th>识别参数</th>
-                    <th>状态</th>
-                    <th>DXF</th>
-                    <th>其他结果</th>
-                    <th>操作</th>
+                    <th class="image-col">图片</th>
+                    <th class="plate-col">板材信息</th>
+                    <th class="dimension-col">尺寸设置</th>
+                    <th class="recognition-col">识别参数</th>
+                    <th class="status-col">状态</th>
+                    <th class="dxf-col">DXF</th>
+                    <th class="result-col">其他结果</th>
+                    <th class="actions-col">操作</th>
                   </tr>
                 </thead>
                 <tbody id="itemsBody"></tbody>
@@ -1012,29 +1172,25 @@
           ? `<a href="${item.urls.image}" target="_blank"><img class="preview-image" src="${item.urls.image}" alt=""></a>`
           : `<div class="small-muted">${escapeHtml(item.original_filename || '')}</div>`;
         tr.innerHTML = `
-          <td>${imageHtml}</td>
-          <td>
-            <div class="fw-semibold">${escapeHtml(item.plate_no || item.original_filename || item.id)}</div>
+          <td class="image-col">${imageHtml}</td>
+          <td class="plate-col">
+            <div class="fw-semibold plate-title" title="${escapeHtml(item.plate_no || item.original_filename || item.id)}">${escapeHtml(item.plate_no || item.original_filename || item.id)}</div>
             <div class="small-muted">数量：${formatNumber(item.quantity)} · ${escapeHtml(item.material || '-')}${item.thickness_mm ? ` · ${item.thickness_mm} mm` : ''}</div>
           </td>
-          <td>
+          <td class="dimension-col">
             ${buildDimensionsCell(item)}
           </td>
-          <td>
-            <div>A4纸识别：${paperSourceLabel(item.paper_source)}</div>
-            <div>A4纸方向：${a4OrientationLabel(item.a4_orientation)}</div>
-            <div>钢板透视：${item.use_plate_perspective ? '是' : '否'}</div>
-            <div>夹钳修复：${item.dxf_notch_fill_enabled ? '是' : '否'}</div>
-            <div class="small-muted">${formatNumber(item.dxf_notch_fill_max_width_mm)} x ${formatNumber(item.dxf_notch_fill_max_depth_mm)} mm</div>
+          <td class="recognition-col">
+            ${buildRecognitionParamsCell(item)}
           </td>
-          <td>
+          <td class="status-col">
             ${statusBadge(item.status)}
             <div class="small-muted mt-1">${item.progress || 0}% ${escapeHtml(item.message || '')}</div>
           </td>
-          <td class="dxf-cell">${buildDxfCell(item)}</td>
-          <td>${buildOtherResultLinks(item)}</td>
-          <td>
-            <div class="btn-group btn-group-sm" role="group">
+          <td class="dxf-col dxf-cell">${buildDxfCell(item)}</td>
+          <td class="result-col">${buildOtherResultLinks(item)}</td>
+          <td class="actions-col actions-cell">
+            <div class="item-actions">
               <button class="btn btn-outline-secondary" type="button" data-action="edit" data-id="${item.id}">${iconSvg('edit')}编辑</button>
               ${item.status === 'completed' ? `<button class="btn btn-outline-secondary" type="button" data-action="clear-recognition" data-id="${item.id}">${iconSvg('rotate')}清除状态</button>` : ''}
               <button class="btn btn-outline-danger" type="button" data-action="delete" data-id="${item.id}">${iconSvg('trash')}删除</button>
@@ -1069,45 +1225,89 @@
       `;
     }
 
+    function attributeLine(label, value) {
+      const text = value || '-';
+      const labelClass = String(label || '').trim().length > 4 ? 'attribute-label large' : 'attribute-label';
+      return `
+        <div class="attribute-line" title="${escapeHtml(text)}">
+          <span class="${labelClass}">${escapeHtml(label)}:</span>
+          <span class="attribute-value">${escapeHtml(text)}</span>
+        </div>
+      `;
+    }
+
+    function attributeStack(lines) {
+      return `<div class="attribute-stack">${lines.join('')}</div>`;
+    }
+
+    function dimensionValue(source, firstKey, secondKey) {
+      const data = source || {};
+      const first = data[firstKey];
+      const second = data[secondKey];
+      if (first === null || first === undefined || first === '' || second === null || second === undefined || second === '') {
+        return '';
+      }
+      return `${formatNumber(first)} x ${formatNumber(second)} mm`;
+    }
+
+    function buildRecognitionParamsCell(item) {
+      const notchSize = `${formatNumber(item.dxf_notch_fill_max_width_mm)} x ${formatNumber(item.dxf_notch_fill_max_depth_mm)} mm`;
+      const columns = [
+        attributeStack([
+          attributeLine('A4识别', paperSourceLabel(item.paper_source)),
+          attributeLine('A4方向', a4OrientationLabel(item.a4_orientation)),
+          attributeLine('钢板透视', item.use_plate_perspective ? '是' : '否'),
+        ]),
+        attributeStack([
+          attributeLine('夹钳修复', item.dxf_notch_fill_enabled ? '是' : '否'),
+          attributeLine('夹钳尺寸', notchSize),
+          attributeLine('状态', item.status || '-'),
+        ]),
+      ];
+      return `<div class="params-grid">${columns.join('')}</div>`;
+    }
+
     function buildDimensionsCell(item) {
       const settings = [];
       if (item.dxf_target_size_1_mm || item.dxf_target_size_2_mm) {
         settings.push(`尺寸1/2：${formatNumber(item.dxf_target_size_1_mm)} / ${formatNumber(item.dxf_target_size_2_mm)} mm`);
       }
       if (item.dxf_target_x_mm || item.dxf_target_y_mm) {
-        settings.push(`x/y：${formatNumber(item.dxf_target_x_mm)} / ${formatNumber(item.dxf_target_y_mm)} mm`);
+        settings.push(`X/Y：${formatNumber(item.dxf_target_x_mm)} / ${formatNumber(item.dxf_target_y_mm)} mm`);
       }
 
-      const detected = dimensionPair(item.detected_plate_dimensions, [
-        ['length_mm', 'width_mm'],
-        ['max_length_mm', 'max_width_mm'],
-        ['axis_bbox_width_mm', 'axis_bbox_height_mm'],
-      ]);
-      const finalSize = dimensionPair(item.plate_dimensions, [
-        ['length_mm', 'width_mm'],
-        ['max_length_mm', 'max_width_mm'],
-        ['axis_bbox_width_mm', 'axis_bbox_height_mm'],
-      ]);
+      const detected = item.detected_plate_dimensions || {};
+      const finalSize = item.plate_dimensions || {};
       const dxfOutput = dimensionPair(item.dxf_target_size, [
         ['output_x_mm', 'output_y_mm'],
         ['target_x_mm', 'target_y_mm'],
       ]);
 
-      const lines = [];
-      lines.push(`<div>${settings.length ? escapeHtml(settings.join('；')) : '设置：未指定'}</div>`);
-      lines.push(`<div class="small-muted">识别：${detected || '-'}</div>`);
-      lines.push(`<div class="small-muted">DXF：${dxfOutput || finalSize || '-'}</div>`);
-      if (item.plate_dimensions && item.plate_dimensions.area_m2) {
-        lines.push(`<div class="small-muted">面积：${formatNumber(item.plate_dimensions.area_m2)} m²</div>`);
-      }
-      return `<div class="dimension-lines">${lines.join('')}</div>`;
+      const columns = [
+        attributeStack([
+          attributeLine('设置尺寸', settings.length ? settings.join('；') : '未指定'),
+          attributeLine('DXF输出', dxfOutput || dimensionValue(finalSize, 'axis_bbox_width_mm', 'axis_bbox_height_mm')),
+          attributeLine('面积', item.plate_dimensions && item.plate_dimensions.area_m2 ? `${formatNumber(item.plate_dimensions.area_m2)} m²` : '-'),
+        ]),
+        attributeStack([
+          attributeLine('最大长宽', dimensionValue(finalSize, 'max_length_mm', 'max_width_mm') || dimensionValue(finalSize, 'length_mm', 'width_mm')),
+          attributeLine('最小长宽', dimensionValue(finalSize, 'min_length_mm', 'min_width_mm')),
+          attributeLine('轴向外框', dimensionValue(finalSize, 'axis_bbox_width_mm', 'axis_bbox_height_mm')),
+        ]),
+        attributeStack([
+          attributeLine('识别最大', dimensionValue(detected, 'max_length_mm', 'max_width_mm') || dimensionValue(detected, 'length_mm', 'width_mm')),
+          attributeLine('识别最小', dimensionValue(detected, 'min_length_mm', 'min_width_mm')),
+          attributeLine('识别外框', dimensionValue(detected, 'axis_bbox_width_mm', 'axis_bbox_height_mm')),
+        ]),
+      ];
+      return `<div class="dimension-grid">${columns.join('')}</div>`;
     }
 
     function buildOtherResultLinks(item) {
       const urls = item.urls || {};
       const links = [];
       if (urls.result_json) links.push(`<a class="btn btn-outline-secondary btn-sm" href="${urls.result_json}" target="_blank">${iconSvg('code')}JSON</a>`);
-      return links.length ? `<div class="d-flex flex-wrap gap-1">${links.join('')}</div>` : '<span class="small-muted">暂无</span>';
+      return links.length ? `<div class="result-links d-flex flex-wrap gap-1">${links.join('')}</div>` : '<span class="small-muted">暂无</span>';
     }
 
     function openItemModal(item = null) {
