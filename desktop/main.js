@@ -10,6 +10,8 @@ app.setName('Pic2Remnant');
 let mainWindow = null;
 let backendProcess = null;
 let backendPort = null;
+let licenseUsable = false;
+let licenseMonitor = null;
 
 function appUrl(page = '') {
   const cleanPage = String(page || '').replace(/^\/+/, '');
@@ -20,7 +22,110 @@ function loadUiPage(page) {
   if (!mainWindow || !backendPort) {
     return;
   }
+  if (!licenseUsable) {
+    showUnavailablePage();
+    return;
+  }
   mainWindow.loadURL(appUrl(page));
+}
+
+function backendUrl(pathname) {
+  return `http://127.0.0.1:${backendPort}${pathname}`;
+}
+
+function requestJson(pathname) {
+  return new Promise((resolve) => {
+    const request = http.get(backendUrl(pathname), (response) => {
+      let body = '';
+      response.setEncoding('utf8');
+      response.on('data', (chunk) => {
+        body += chunk;
+      });
+      response.on('end', () => {
+        try {
+          resolve({ statusCode: response.statusCode, body: JSON.parse(body || '{}') });
+        } catch (_) {
+          resolve({ statusCode: response.statusCode, body: {} });
+        }
+      });
+    });
+
+    request.on('error', () => resolve({ statusCode: 0, body: {} }));
+    request.setTimeout(3000, () => {
+      request.destroy();
+      resolve({ statusCode: 0, body: {} });
+    });
+  });
+}
+
+async function checkLicenseStatus() {
+  if (!backendPort) {
+    return false;
+  }
+  const response = await requestJson('/license/status');
+  return response.statusCode === 200 && response.body && response.body.ok === true;
+}
+
+function showUnavailablePage() {
+  if (!mainWindow) {
+    return;
+  }
+  const html = `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>无法使用</title>
+  <style>
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      font-family: Arial, "Microsoft YaHei", sans-serif;
+      color: #1f2937;
+      background: #eef2f7;
+    }
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    h1 {
+      margin: 0;
+      font-size: 34px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+  </style>
+</head>
+<body>
+  <h1>无法使用</h1>
+</body>
+</html>`;
+  mainWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+}
+
+function startLicenseMonitor() {
+  if (licenseMonitor) {
+    clearInterval(licenseMonitor);
+  }
+
+  licenseMonitor = setInterval(async () => {
+    const usable = await checkLicenseStatus();
+    if (!licenseUsable && usable) {
+      licenseUsable = true;
+      loadUiPage('datasets.html');
+      return;
+    }
+
+    if (licenseUsable && !usable) {
+      licenseUsable = false;
+      showUnavailablePage();
+      return;
+    }
+
+    licenseUsable = usable;
+  }, 60000);
 }
 
 function createAppMenu() {
@@ -157,6 +262,7 @@ async function startBackend() {
   const outputRoot = path.join(runtimeRoot, 'measure_out');
   const logDir = path.join(runtimeRoot, 'logs');
   const dataDir = path.join(runtimeRoot, 'data');
+  const licenseRoot = app.isPackaged ? path.dirname(process.execPath) : projectRoot;
 
   fs.mkdirSync(outputRoot, { recursive: true });
   fs.mkdirSync(logDir, { recursive: true });
@@ -175,6 +281,8 @@ async function startBackend() {
     OUTPUT_ROOT: outputRoot,
     LOG_DIR: logDir,
     TASK_DB_PATH: path.join(dataDir, 'tasks.sqlite3'),
+    LICENSE_ROOT: licenseRoot,
+    LICENSE_STATE_PATH: path.join(dataDir, 'license_state.json'),
     DESKTOP_APP: '1',
     PYTHONUNBUFFERED: '1',
   };
@@ -266,10 +374,18 @@ function createWindow() {
     return { action: 'deny' };
   });
 
-  mainWindow.loadURL(appUrl('datasets.html'));
+  if (licenseUsable) {
+    mainWindow.loadURL(appUrl('datasets.html'));
+  } else {
+    showUnavailablePage();
+  }
 }
 
 function stopBackend() {
+  if (licenseMonitor) {
+    clearInterval(licenseMonitor);
+    licenseMonitor = null;
+  }
   if (backendProcess && !backendProcess.killed) {
     backendProcess.kill();
   }
@@ -278,7 +394,9 @@ function stopBackend() {
 app.whenReady().then(async () => {
   try {
     await startBackend();
+    licenseUsable = await checkLicenseStatus();
     createWindow();
+    startLicenseMonitor();
   } catch (error) {
     dialog.showErrorBox('启动失败', String(error && error.message ? error.message : error));
     app.quit();

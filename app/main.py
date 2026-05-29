@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.config import get_settings
 from app.errors import public_error_message, sanitize_public_error_detail
+from app.license import license_gate
 from app.logging_config import setup_logging
 
 settings = get_settings()
@@ -32,6 +34,43 @@ app = FastAPI(
     version="1.2.0",
     description="Pic2Remnant service. It returns generated DXF, mask, image and JSON paths.",
 )
+
+LICENSE_EXEMPT_PATHS = {"/health", "/license/status"}
+
+
+async def _license_monitor() -> None:
+    interval = max(10, int(os.getenv("LICENSE_CHECK_INTERVAL_SEC", "60")))
+    while True:
+        license_gate.check()
+        await asyncio.sleep(interval)
+
+
+@app.on_event("startup")
+async def startup_license_monitor() -> None:
+    license_gate.check()
+    app.state.license_monitor_task = asyncio.create_task(_license_monitor())
+
+
+@app.on_event("shutdown")
+async def shutdown_license_monitor() -> None:
+    task = getattr(app.state, "license_monitor_task", None)
+    if task:
+        task.cancel()
+
+
+@app.middleware("http")
+async def license_middleware(request: Request, call_next):
+    if request.url.path not in LICENSE_EXEMPT_PATHS:
+        status = license_gate.check()
+        if not status.ok:
+            return JSONResponse(status_code=403, content={"detail": "无法使用", "code": status.code})
+    return await call_next(request)
+
+
+@app.get("/license/status", include_in_schema=False)
+def license_status() -> JSONResponse:
+    status = license_gate.check()
+    return JSONResponse(status_code=200 if status.ok else 403, content=status.public_dict())
 
 
 @app.exception_handler(StarletteHTTPException)
