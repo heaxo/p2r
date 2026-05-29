@@ -8,10 +8,18 @@ const { spawn } = require('child_process');
 app.setName('Pic2Remnant');
 
 let mainWindow = null;
+let startupWindow = null;
 let backendProcess = null;
 let backendPort = null;
 let licenseUsable = false;
 let licenseMonitor = null;
+let startupProgress = 1;
+let startupTargetProgress = 1;
+let startupMessage = '正在启动...';
+let startupProgressTimer = null;
+let startupStartedAt = 0;
+const STARTUP_ANIMATION_MS = 7000;
+const STARTUP_AUTO_PROGRESS_CAP = 95;
 
 function appUrl(page = '') {
   const cleanPage = String(page || '').replace(/^\/+/, '');
@@ -27,6 +35,175 @@ function loadUiPage(page) {
     return;
   }
   mainWindow.loadURL(appUrl(page));
+}
+
+function startupHtml(percent, message) {
+  const safePercent = Math.max(0, Math.min(100, Number(percent) || 0));
+  const safeMessage = String(message || '正在启动...');
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pic2Remnant</title>
+  <style>
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      font-family: Arial, "Microsoft YaHei", sans-serif;
+      color: #1f2937;
+      background: #eef2f7;
+      overflow: hidden;
+    }
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .shell {
+      width: 420px;
+      padding: 30px 32px;
+      background: #ffffff;
+      border: 1px solid #d7deea;
+      border-radius: 8px;
+      box-shadow: 0 12px 36px rgba(15, 23, 42, .16);
+    }
+    h1 {
+      margin: 0 0 18px;
+      font-size: 22px;
+      line-height: 1.2;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+    .message {
+      min-height: 22px;
+      margin-bottom: 16px;
+      font-size: 14px;
+      color: #667085;
+    }
+    .track {
+      width: 100%;
+      height: 10px;
+      overflow: hidden;
+      background: #e5eaf3;
+      border-radius: 999px;
+    }
+    .bar {
+      width: ${safePercent}%;
+      height: 100%;
+      background: #2d579b;
+      border-radius: 999px;
+      transition: width .25s ease;
+    }
+    .percent {
+      margin-top: 10px;
+      text-align: right;
+      font-size: 12px;
+      color: #667085;
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <h1>Pic2Remnant</h1>
+    <div class="message">${safeMessage}</div>
+    <div class="track"><div class="bar"></div></div>
+    <div class="percent">${safePercent}%</div>
+  </div>
+</body>
+</html>`;
+}
+
+function renderStartupWindow() {
+  if (!startupWindow || startupWindow.isDestroyed()) {
+    return;
+  }
+  startupWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(startupHtml(startupProgress, startupMessage))}`);
+}
+
+function updateStartupWindow(percent, message) {
+  startupMessage = String(message || startupMessage);
+  const requestedProgress = Math.max(1, Math.min(100, Number(percent) || 1));
+  if (requestedProgress >= 100) {
+    startupTargetProgress = 100;
+  }
+  renderStartupWindow();
+}
+
+function completeStartupWindow(message) {
+  startupMessage = String(message || startupMessage);
+  startupTargetProgress = 100;
+  startupProgress = 100;
+  renderStartupWindow();
+}
+
+function startStartupProgressAnimation() {
+  if (startupProgressTimer) {
+    clearInterval(startupProgressTimer);
+  }
+
+  startupProgressTimer = setInterval(() => {
+    if (!startupWindow || startupWindow.isDestroyed()) {
+      clearInterval(startupProgressTimer);
+      startupProgressTimer = null;
+      return;
+    }
+
+    const elapsed = Date.now() - startupStartedAt;
+    const timedProgress = Math.min(
+      STARTUP_AUTO_PROGRESS_CAP,
+      1 + Math.floor((elapsed / STARTUP_ANIMATION_MS) * (STARTUP_AUTO_PROGRESS_CAP - 1)),
+    );
+    const nextTarget = Math.max(startupTargetProgress, timedProgress);
+
+    if (startupProgress < nextTarget) {
+      const distance = nextTarget - startupProgress;
+      startupProgress += Math.max(1, Math.ceil(distance / 8));
+      startupProgress = Math.min(startupProgress, nextTarget);
+      renderStartupWindow();
+    }
+  }, 160);
+}
+
+function closeStartupWindow() {
+  if (startupProgressTimer) {
+    clearInterval(startupProgressTimer);
+    startupProgressTimer = null;
+  }
+  if (startupWindow && !startupWindow.isDestroyed()) {
+    startupWindow.close();
+  }
+  startupWindow = null;
+}
+
+function createStartupWindow() {
+  startupProgress = 1;
+  startupTargetProgress = 1;
+  startupMessage = '正在启动...';
+  startupStartedAt = Date.now();
+  startupWindow = new BrowserWindow({
+    width: 520,
+    height: 320,
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    show: false,
+    icon: path.join(__dirname, 'icon.ico'),
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  startupWindow.setMenuBarVisibility(false);
+  startupWindow.once('ready-to-show', () => {
+    if (startupWindow && !startupWindow.isDestroyed()) {
+      startupWindow.show();
+    }
+  });
+  renderStartupWindow();
+  startStartupProgressAnimation();
 }
 
 function backendUrl(pathname) {
@@ -255,7 +432,8 @@ function appendLog(logStream, chunk) {
   logStream.write(chunk);
 }
 
-async function startBackend() {
+async function startBackend(onProgress = () => {}) {
+  onProgress(12, '正在准备运行目录...');
   const projectRoot = path.resolve(__dirname, '..');
   const userData = app.getPath('userData');
   const runtimeRoot = path.join(userData, 'runtime');
@@ -268,6 +446,7 @@ async function startBackend() {
   fs.mkdirSync(logDir, { recursive: true });
   fs.mkdirSync(dataDir, { recursive: true });
 
+  onProgress(24, '正在分配本地端口...');
   backendPort = await findFreePort();
   const backend = getBackendCommand(projectRoot);
   const backendLogPath = path.join(logDir, 'backend-process.log');
@@ -290,6 +469,7 @@ async function startBackend() {
     env.YOLO_MODEL_PATH = modelPath;
   }
 
+  onProgress(42, '正在启动后台服务...');
   backendProcess = spawn(backend.command, backend.args, {
     cwd: backend.cwd,
     env,
@@ -311,8 +491,11 @@ async function startBackend() {
   });
 
   try {
+    onProgress(66, '正在等待后台服务就绪...');
     await Promise.race([waitForBackend(backendPort), backendProcessError]);
+    onProgress(86, '后台服务已就绪...');
   } catch (error) {
+    closeStartupWindow();
     throw new Error(`${error.message}\nBackend log: ${backendLogPath}`);
   }
 }
@@ -368,7 +551,10 @@ function createWindow() {
 
   createAppMenu();
   mainWindow.setMenuBarVisibility(true);
-  mainWindow.once('ready-to-show', () => mainWindow.show());
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.show();
+    closeStartupWindow();
+  });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: 'deny' };
@@ -393,11 +579,15 @@ function stopBackend() {
 
 app.whenReady().then(async () => {
   try {
-    await startBackend();
+    createStartupWindow();
+    await startBackend(updateStartupWindow);
+    updateStartupWindow(92, '正在检查使用权限...');
     licenseUsable = await checkLicenseStatus();
+    completeStartupWindow('正在打开界面...');
     createWindow();
     startLicenseMonitor();
   } catch (error) {
+    closeStartupWindow();
     dialog.showErrorBox('启动失败', String(error && error.message ? error.message : error));
     app.quit();
   }
