@@ -475,6 +475,58 @@
       background: #f8fafc;
     }
 
+    .image-pick-button {
+      border: 0;
+      padding: 0;
+      background: transparent;
+      cursor: crosshair;
+    }
+
+    .point-picker-help {
+      color: var(--app-muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .point-picker-stage {
+      position: relative;
+      display: inline-block;
+      max-width: 100%;
+      border: 1px solid var(--app-border);
+      border-radius: 6px;
+      overflow: hidden;
+      background: #111827;
+      cursor: crosshair;
+    }
+
+    .point-picker-stage img {
+      display: block;
+      max-width: min(100%, 1080px);
+      max-height: 68vh;
+      width: auto;
+      height: auto;
+      user-select: none;
+    }
+
+    .point-marker {
+      position: absolute;
+      width: 18px;
+      height: 18px;
+      border: 2px solid #fff;
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      box-shadow: 0 0 0 2px rgba(15, 23, 42, .55);
+      pointer-events: none;
+    }
+
+    .point-marker.plate {
+      background: #2563eb;
+    }
+
+    .point-marker.paper {
+      background: #d946ef;
+    }
+
     .modal-image-preview {
       width: 78px;
       height: 56px;
@@ -924,6 +976,14 @@
                   <label class="form-check-label" for="notchEnabled">夹钳修复</label>
                 </div>
               </div>
+              <div class="col-12 col-md-4">
+                <label for="platePointRatio" class="form-label">用户指定钢板点</label>
+                <input id="platePointRatio" class="form-control" type="text" placeholder="未指定" readonly />
+              </div>
+              <div class="col-12 col-md-4">
+                <label for="paperPointRatio" class="form-label">用户指定A4纸点</label>
+                <input id="paperPointRatio" class="form-control" type="text" placeholder="未指定" readonly />
+              </div>
             </div>
             <div id="itemFormMessage" class="message-line text-secondary mt-3"></div>
           </div>
@@ -932,6 +992,38 @@
             <button id="saveItemBtn" class="btn btn-primary" type="submit">保存</button>
           </div>
         </form>
+      </div>
+    </div>
+  </div>
+
+  <div id="pointPickerModal" class="modal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2 class="modal-title fs-6">指定 SAM2 提示点</h2>
+          <button type="button" class="btn-close" data-close-modal="pointPickerModal" aria-label="关闭"></button>
+        </div>
+        <div class="modal-body">
+          <div class="point-picker-help mb-3">
+            这里用于手动指定 SAM2 分割提示点。钢板点应点在钢板内部且避开文字、边缘和孔洞；A4纸点应点在白纸内部。指定后识别会优先使用用户点，不再通过 YOLO 结果计算该提示点。
+          </div>
+          <div class="d-flex flex-wrap gap-2 mb-3">
+            <button id="pickPlatePointBtn" class="btn btn-primary btn-sm" type="button">指定钢板点</button>
+            <button id="pickPaperPointBtn" class="btn btn-outline-primary btn-sm" type="button">指定A4纸点</button>
+            <button id="clearPlatePointBtn" class="btn btn-outline-secondary btn-sm" type="button">清除钢板点</button>
+            <button id="clearPaperPointBtn" class="btn btn-outline-secondary btn-sm" type="button">清除A4纸点</button>
+          </div>
+          <div id="pointPickerStage" class="point-picker-stage">
+            <img id="pointPickerImage" alt="点选图片" />
+            <span id="platePointMarker" class="point-marker plate" hidden></span>
+            <span id="paperPointMarker" class="point-marker paper" hidden></span>
+          </div>
+          <div id="pointPickerMessage" class="message-line text-secondary mt-3"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-close-modal="pointPickerModal">取消</button>
+          <button id="savePointPickerBtn" class="btn btn-primary" type="button">保存点坐标</button>
+        </div>
       </div>
     </div>
   </div>
@@ -951,6 +1043,9 @@
       importDurationMs: 0,
       importInProgress: false,
       itemRenderKeys: new Map(),
+      pointPickingItem: null,
+      pointPickingMode: 'plate',
+      pointDraft: { plate: '', paper: '' },
     };
 
     const els = {
@@ -999,9 +1094,22 @@
       paperSource: document.getElementById('paperSource'),
       a4Orientation: document.getElementById('a4Orientation'),
       usePlatePerspective: document.getElementById('usePlatePerspective'),
+      platePointRatio: document.getElementById('platePointRatio'),
+      paperPointRatio: document.getElementById('paperPointRatio'),
       notchEnabled: document.getElementById('notchEnabled'),
       notchWidth: document.getElementById('notchWidth'),
       notchDepth: document.getElementById('notchDepth'),
+      pointPickerModal: document.getElementById('pointPickerModal'),
+      pointPickerStage: document.getElementById('pointPickerStage'),
+      pointPickerImage: document.getElementById('pointPickerImage'),
+      platePointMarker: document.getElementById('platePointMarker'),
+      paperPointMarker: document.getElementById('paperPointMarker'),
+      pickPlatePointBtn: document.getElementById('pickPlatePointBtn'),
+      pickPaperPointBtn: document.getElementById('pickPaperPointBtn'),
+      clearPlatePointBtn: document.getElementById('clearPlatePointBtn'),
+      clearPaperPointBtn: document.getElementById('clearPaperPointBtn'),
+      savePointPickerBtn: document.getElementById('savePointPickerBtn'),
+      pointPickerMessage: document.getElementById('pointPickerMessage'),
       emptyItems: document.getElementById('emptyItems'),
       itemsTableWrap: document.getElementById('itemsTableWrap'),
       itemsBody: document.getElementById('itemsBody'),
@@ -1091,6 +1199,13 @@
       if (value === 'landscape') return 'x297';
       if (value === 'portrait') return 'x210';
       return '自动判断';
+    }
+
+    function pointRatioLabel(value) {
+      if (!value) return '未指定';
+      const parts = String(value).split(',').map(part => Number(part));
+      if (parts.length !== 2 || parts.some(part => !Number.isFinite(part))) return value;
+      return `${Math.round(parts[0] * 1000) / 10}%, ${Math.round(parts[1] * 1000) / 10}%`;
     }
 
     async function request(path, options = {}) {
@@ -1276,6 +1391,8 @@
         targetY: item.dxf_target_y_mm ?? '',
         paperSource: item.paper_source || '',
         a4Orientation: item.a4_orientation || '',
+        platePoint: item.plate_point_ratio || '',
+        paperPoint: item.paper_point_ratio || '',
         usePlatePerspective: !!item.use_plate_perspective,
         notchEnabled: !!item.dxf_notch_fill_enabled,
         notchWidth: item.dxf_notch_fill_max_width_mm ?? '',
@@ -1285,7 +1402,7 @@
 
     function buildItemRowHtml(item) {
       const imageHtml = item.urls && item.urls.image
-        ? `<a href="${item.urls.image}" target="_blank"><img class="preview-image" src="${item.urls.image}" alt="" loading="lazy" decoding="async"></a>`
+        ? `<button class="image-pick-button" type="button" data-action="pick-points" data-id="${item.id}" title="指定钢板/A4纸坐标"><img class="preview-image" src="${item.urls.image}" alt="" loading="lazy" decoding="async"></button>`
         : `<div class="small-muted">${escapeHtml(item.original_filename || '')}</div>`;
       return `
         <td class="image-col">${imageHtml}</td>
@@ -1387,10 +1504,12 @@
           attributeLine('A4识别', paperSourceLabel(item.paper_source)),
           attributeLine('A4方向', a4OrientationLabel(item.a4_orientation)),
           attributeLine('钢板透视', item.use_plate_perspective ? '是' : '否'),
+          attributeLine('钢板点', pointRatioLabel(item.plate_point_ratio)),
         ]),
         attributeStack([
           attributeLine('夹钳修复', item.dxf_notch_fill_enabled ? '是' : '否'),
           attributeLine('夹钳尺寸', notchSize),
+          attributeLine('A4点', pointRatioLabel(item.paper_point_ratio)),
           attributeLine('状态', item.status || '-'),
         ]),
       ];
@@ -1456,6 +1575,8 @@
       els.paperSource.value = !item || item.paper_source === 'sam2' ? 'standard' : 'training';
       els.a4Orientation.value = item && item.a4_orientation ? item.a4_orientation : 'auto';
       els.usePlatePerspective.checked = !!(item && item.use_plate_perspective);
+      els.platePointRatio.value = item ? item.plate_point_ratio || '' : '';
+      els.paperPointRatio.value = item ? item.paper_point_ratio || '' : '';
       els.notchEnabled.checked = !!(item && item.dxf_notch_fill_enabled);
       els.notchWidth.value = item && item.dxf_notch_fill_max_width_mm != null ? item.dxf_notch_fill_max_width_mm : 200;
       els.notchDepth.value = item && item.dxf_notch_fill_max_depth_mm != null ? item.dxf_notch_fill_max_depth_mm : 200;
@@ -1485,6 +1606,8 @@
       appendValue(form, 'dxf_target_y_mm', els.targetY.value);
       appendValue(form, 'paper_source', els.paperSource.value || 'standard');
       appendValue(form, 'a4_orientation', els.a4Orientation.value || 'auto');
+      appendValue(form, 'plate_point_ratio', els.platePointRatio.value);
+      appendValue(form, 'paper_point_ratio', els.paperPointRatio.value);
       form.append('use_plate_perspective', els.usePlatePerspective.checked ? 'true' : 'false');
       form.append('dxf_notch_fill_enabled', els.notchEnabled.checked ? 'true' : 'false');
       appendValue(form, 'dxf_notch_fill_max_width_mm', els.notchWidth.value || '200');
@@ -1494,6 +1617,115 @@
 
     function appendValue(form, key, value) {
       form.append(key, value == null ? '' : String(value).trim());
+    }
+
+    function appendItemFields(form, item, overrides = {}) {
+      const source = { ...(item || {}), ...overrides };
+      appendValue(form, 'plate_no', source.plate_no);
+      appendValue(form, 'quantity', source.quantity);
+      appendValue(form, 'material', source.material);
+      appendValue(form, 'thickness_mm', source.thickness_mm);
+      appendValue(form, 'dxf_target_size_1_mm', source.dxf_target_size_1_mm);
+      appendValue(form, 'dxf_target_size_2_mm', source.dxf_target_size_2_mm);
+      appendValue(form, 'dxf_target_x_mm', source.dxf_target_x_mm);
+      appendValue(form, 'dxf_target_y_mm', source.dxf_target_y_mm);
+      appendValue(form, 'paper_source', source.paper_source === 'yolo' ? 'training' : 'standard');
+      appendValue(form, 'a4_orientation', source.a4_orientation || 'auto');
+      appendValue(form, 'plate_point_ratio', source.plate_point_ratio);
+      appendValue(form, 'paper_point_ratio', source.paper_point_ratio);
+      form.append('use_plate_perspective', source.use_plate_perspective ? 'true' : 'false');
+      form.append('dxf_notch_fill_enabled', source.dxf_notch_fill_enabled ? 'true' : 'false');
+      appendValue(form, 'dxf_notch_fill_max_width_mm', source.dxf_notch_fill_max_width_mm || '200');
+      appendValue(form, 'dxf_notch_fill_max_depth_mm', source.dxf_notch_fill_max_depth_mm || '200');
+      return form;
+    }
+
+    function openPointPicker(item) {
+      if (!item || !item.urls || !item.urls.image) return;
+      state.pointPickingItem = item;
+      state.pointPickingMode = 'plate';
+      state.pointDraft = {
+        plate: item.plate_point_ratio || '',
+        paper: item.paper_point_ratio || '',
+      };
+      els.pointPickerImage.src = item.urls.image;
+      setPointPickerMode('plate');
+      updatePointMarkers();
+      setMessage(els.pointPickerMessage, '当前模式：指定钢板点。请点击钢板内部可靠位置。');
+      showModal('pointPickerModal');
+    }
+
+    function setPointPickerMode(mode) {
+      state.pointPickingMode = mode === 'paper' ? 'paper' : 'plate';
+      const plateActive = state.pointPickingMode === 'plate';
+      els.pickPlatePointBtn.className = `btn ${plateActive ? 'btn-primary' : 'btn-outline-primary'} btn-sm`;
+      els.pickPaperPointBtn.className = `btn ${plateActive ? 'btn-outline-primary' : 'btn-primary'} btn-sm`;
+      setMessage(
+        els.pointPickerMessage,
+        plateActive ? '当前模式：指定钢板点。请点击钢板内部可靠位置。' : '当前模式：指定A4纸点。请点击白纸内部可靠位置。'
+      );
+    }
+
+    function formatPointRatio(rx, ry) {
+      return `${rx.toFixed(8)},${ry.toFixed(8)}`;
+    }
+
+    function parsePointRatio(value) {
+      if (!value) return null;
+      const parts = String(value).split(',').map(part => Number(part));
+      if (parts.length !== 2 || parts.some(part => !Number.isFinite(part))) return null;
+      return { rx: Math.max(0, Math.min(1, parts[0])), ry: Math.max(0, Math.min(1, parts[1])) };
+    }
+
+    function updatePointMarkers() {
+      updateOnePointMarker(els.platePointMarker, state.pointDraft.plate);
+      updateOnePointMarker(els.paperPointMarker, state.pointDraft.paper);
+    }
+
+    function updateOnePointMarker(marker, ratioValue) {
+      const ratio = parsePointRatio(ratioValue);
+      if (!ratio) {
+        marker.hidden = true;
+        return;
+      }
+      marker.style.left = `${ratio.rx * 100}%`;
+      marker.style.top = `${ratio.ry * 100}%`;
+      marker.hidden = false;
+    }
+
+    function handlePointPickerClick(event) {
+      if (!state.pointPickingItem) return;
+      const rect = els.pointPickerImage.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      const rx = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+      const ry = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
+      const value = formatPointRatio(rx, ry);
+      if (state.pointPickingMode === 'paper') {
+        state.pointDraft.paper = value;
+      } else {
+        state.pointDraft.plate = value;
+      }
+      updatePointMarkers();
+      setMessage(els.pointPickerMessage, `${state.pointPickingMode === 'paper' ? 'A4纸点' : '钢板点'}已记录：${pointRatioLabel(value)}`, 'success');
+    }
+
+    async function savePointPicker() {
+      const item = state.pointPickingItem;
+      if (!state.selectedId || !item) return;
+      const form = appendItemFields(new FormData(), item, {
+        plate_point_ratio: state.pointDraft.plate,
+        paper_point_ratio: state.pointDraft.paper,
+      });
+      setMessage(els.pointPickerMessage, '正在保存点坐标...');
+      try {
+        const payload = await request(`/datasets/${state.selectedId}/items/${item.id}`, { method: 'PUT', body: form });
+        state.selected = payload.dataset;
+        renderSelectedDataset();
+        hideModal('pointPickerModal');
+        setMessage(els.detailMessage, '点坐标已保存', 'success');
+      } catch (error) {
+        showError(els.pointPickerMessage, error);
+      }
     }
 
     async function saveItem(event) {
@@ -1863,12 +2095,30 @@
       if (!state.selectedId) return;
       downloadFile(`/datasets/${state.selectedId}/download-dxf`, `${state.selected.name}_dxf.zip`).catch(error => showError(els.detailMessage, error));
     });
+    els.pickPlatePointBtn.addEventListener('click', () => setPointPickerMode('plate'));
+    els.pickPaperPointBtn.addEventListener('click', () => setPointPickerMode('paper'));
+    els.clearPlatePointBtn.addEventListener('click', () => {
+      state.pointDraft.plate = '';
+      updatePointMarkers();
+      setMessage(els.pointPickerMessage, '已清除钢板点');
+    });
+    els.clearPaperPointBtn.addEventListener('click', () => {
+      state.pointDraft.paper = '';
+      updatePointMarkers();
+      setMessage(els.pointPickerMessage, '已清除A4纸点');
+    });
+    els.pointPickerStage.addEventListener('click', handlePointPickerClick);
+    els.savePointPickerBtn.addEventListener('click', savePointPicker);
     els.itemImage.addEventListener('change', updateItemImagePreview);
     els.itemForm.addEventListener('submit', saveItem);
     els.itemsBody.addEventListener('click', (event) => {
       const button = event.target.closest('button[data-action]');
       if (!button || !state.selected) return;
       const item = state.selected.items.find(row => row.id === button.dataset.id);
+      if (button.dataset.action === 'pick-points' && item) {
+        openPointPicker(item);
+        return;
+      }
       if (button.dataset.action === 'edit' && item) {
         openItemModal(item);
       }

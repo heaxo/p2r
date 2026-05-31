@@ -1013,6 +1013,7 @@ def run_sam2_for_paper_from_yolo(
     model_name: str,
     fallback_to_yolo_mask: bool = True,
     detect_by_sam2: bool = True,
+    user_point_ratio: Optional[str] = None,
 ) -> Tuple[Optional[np.ndarray], Dict[str, Any]]:
     info: Dict[str, Any] = {
         "paper_class_names": parse_name_list(paper_class_names),
@@ -1022,6 +1023,38 @@ def run_sam2_for_paper_from_yolo(
         "paper_mask_source": None,
         "message": "",
     }
+
+    manual_ratio = parse_user_point_ratio(user_point_ratio)
+    if manual_ratio is not None:
+        x, y = ratio_to_xy(manual_ratio, image_rgb.shape)
+        info["paper_point"] = {"x": int(x), "y": int(y), "ratio_x": float(manual_ratio[0]), "ratio_y": float(manual_ratio[1])}
+        info["manual_point"] = True
+        if detect_by_sam2:
+            try:
+                masks = run_sam2_masks_by_point(image_rgb=image_rgb, x=int(x), y=int(y), model_name=model_name)
+                if masks:
+                    paper_mask, best = pick_best_mask_from_masks(masks, image_rgb.shape[:2], "paper", point_score=1.0)
+                    if best["sam_detail"].get("reason") == "ok" and best["sam_score"] > -100:
+                        info["paper_mask_source"] = "sam2_one_point_from_user_paper"
+                        info["sam_info"] = {
+                            "x": int(x),
+                            "y": int(y),
+                            "mode": "paper_user_ratio_point",
+                            "user_ratio": manual_ratio,
+                            "sam_score": float(best["sam_score"]),
+                            "sam_detail": best["sam_detail"],
+                            "mask_index": int(best["mask_index"]),
+                        }
+                        info["message"] = "使用用户指定 A4 点生成 paper mask"
+                        return paper_mask, info
+                    info["sam_info"] = {"sam_score": float(best["sam_score"]), "sam_detail": best["sam_detail"], "message": "用户 A4 点生成的 SAM2 paper mask 评分不合理"}
+                else:
+                    info["sam_info"] = {"message": "用户 A4 点没有生成 paper mask"}
+            except Exception as e:
+                info["sam_info"] = {"message": str(e), "traceback": traceback.format_exc(limit=5)}
+
+        info["message"] = "用户指定了 A4 点，但 SAM2 没有成功生成 paper mask"
+        return None, info
 
     instance = get_largest_yolo_instance_by_classes(result, paper_class_names)
     if instance is None:
@@ -2876,7 +2909,18 @@ def process_one_image(args) -> Dict[str, Any]:
             "message": "ChArUco reference detected; A4 paper detection was not required.",
         }
     else:
-        if args.paper_source == "yolo":
+        paper_user_point_ratio = getattr(args, "paper_user_point_ratio", None)
+        if paper_user_point_ratio:
+            paper_mask, paper_info = run_sam2_for_paper_from_yolo(
+                result=result,
+                image_rgb=image_rgb,
+                paper_class_names=paper_class_names,
+                model_name=args.sam_model,
+                fallback_to_yolo_mask=False,
+                detect_by_sam2=True,
+                user_point_ratio=paper_user_point_ratio,
+            )
+        elif args.paper_source == "yolo":
             paper_mask, paper_info = run_paper_from_yolo_only(
                 result=result,
                 image_rgb=image_rgb,
@@ -2890,6 +2934,7 @@ def process_one_image(args) -> Dict[str, Any]:
                 model_name=args.sam_model,
                 fallback_to_yolo_mask=bool(args.paper_sam2_yolo_fallback),
                 detect_by_sam2=True,
+                user_point_ratio=None,
             )
 
         if paper_mask is not None and int((paper_mask > 0).sum()) > 0:

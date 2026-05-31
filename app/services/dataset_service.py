@@ -220,6 +220,8 @@ class DatasetService:
                 dxf_target_y_mm=item.get("dxf_target_y_mm"),
                 paper_source=item.get("paper_source") or "sam2",
                 a4_orientation=item.get("a4_orientation") or "auto",
+                plate_point_ratio=item.get("plate_point_ratio"),
+                paper_point_ratio=item.get("paper_point_ratio"),
                 use_plate_perspective=bool(item.get("use_plate_perspective")),
                 dxf_notch_fill_enabled=bool(item.get("dxf_notch_fill_enabled")),
                 dxf_notch_fill_max_width_mm=item.get("dxf_notch_fill_max_width_mm"),
@@ -277,7 +279,8 @@ class DatasetService:
                     yolo_input_mode="canonical_path",
                     plate_class="plate",
                     paper_class="paper",
-                    user_point_ratio=None,
+                    user_point_ratio=item.get("plate_point_ratio"),
+                    paper_user_point_ratio=item.get("paper_point_ratio"),
                     paper_source=self._normalize_paper_source(item.get("paper_source")),
                     paper_sam2_yolo_fallback=False,
                     a4_orientation=self._normalize_a4_orientation(item.get("a4_orientation")),
@@ -729,6 +732,8 @@ class DatasetService:
             "dxf_target_y_mm": self._optional_positive_float(fields.get("dxf_target_y_mm"), "y"),
             "paper_source": self._normalize_paper_source(fields.get("paper_source")),
             "a4_orientation": self._normalize_a4_orientation(fields.get("a4_orientation")),
+            "plate_point_ratio": self._normalize_point_ratio(fields.get("plate_point_ratio"), "钢板点"),
+            "paper_point_ratio": self._normalize_point_ratio(fields.get("paper_point_ratio"), "A4纸点"),
             "use_plate_perspective": self._parse_bool(fields.get("use_plate_perspective")),
             "dxf_notch_fill_enabled": self._parse_bool(fields.get("dxf_notch_fill_enabled")),
             "dxf_notch_fill_max_width_mm": self._optional_positive_float(
@@ -795,6 +800,8 @@ class DatasetService:
             "dxf_target_y_mm": row.get("dxf_target_y_mm"),
             "paper_source": self._normalize_paper_source(row.get("paper_source")),
             "a4_orientation": self._normalize_a4_orientation(row.get("a4_orientation")),
+            "plate_point_ratio": row.get("plate_point_ratio") or "",
+            "paper_point_ratio": row.get("paper_point_ratio") or "",
             "use_plate_perspective": bool(row.get("use_plate_perspective")),
             "dxf_notch_fill_enabled": bool(row.get("dxf_notch_fill_enabled")),
             "dxf_notch_fill_max_width_mm": row.get("dxf_notch_fill_max_width_mm"),
@@ -1017,6 +1024,22 @@ class DatasetService:
         if text in {"sam2", "standard", "std", "标准", "标准识别"}:
             return "sam2"
         raise ValueError("A4纸来源参数不正确")
+
+    def _normalize_point_ratio(self, value: Any, label: str) -> str | None:
+        text = self._as_text(value).strip()
+        if not text:
+            return None
+        parts = [part.strip() for part in text.split(",") if part.strip()]
+        if len(parts) != 2:
+            raise ValueError(f"{label}坐标格式不正确")
+        try:
+            rx = float(parts[0])
+            ry = float(parts[1])
+        except ValueError as exc:
+            raise ValueError(f"{label}坐标必须是数字") from exc
+        if not (0.0 <= rx <= 1.0 and 0.0 <= ry <= 1.0):
+            raise ValueError(f"{label}坐标必须在图片范围内")
+        return f"{rx:.8f},{ry:.8f}"
 
     def _normalize_a4_orientation(self, value: Any) -> str:
         text = self._as_text(value).lower()

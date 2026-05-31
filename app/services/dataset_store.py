@@ -65,6 +65,8 @@ class DatasetStore:
                     dxf_target_y_mm REAL,
                     paper_source TEXT NOT NULL DEFAULT 'sam2',
                     a4_orientation TEXT NOT NULL DEFAULT 'auto',
+                    plate_point_ratio TEXT,
+                    paper_point_ratio TEXT,
                     use_plate_perspective INTEGER NOT NULL DEFAULT 0,
                     dxf_notch_fill_enabled INTEGER NOT NULL DEFAULT 0,
                     dxf_notch_fill_max_width_mm REAL NOT NULL DEFAULT 80.0,
@@ -95,6 +97,10 @@ class DatasetStore:
                 conn.execute("ALTER TABLE dataset_items ADD COLUMN paper_source TEXT NOT NULL DEFAULT 'sam2'")
             if "a4_orientation" not in item_columns:
                 conn.execute("ALTER TABLE dataset_items ADD COLUMN a4_orientation TEXT NOT NULL DEFAULT 'auto'")
+            if "plate_point_ratio" not in item_columns:
+                conn.execute("ALTER TABLE dataset_items ADD COLUMN plate_point_ratio TEXT")
+            if "paper_point_ratio" not in item_columns:
+                conn.execute("ALTER TABLE dataset_items ADD COLUMN paper_point_ratio TEXT")
 
     def mark_interrupted_work_failed(self) -> None:
         now = utc_now()
@@ -231,6 +237,8 @@ class DatasetStore:
             "dxf_target_y_mm": fields.get("dxf_target_y_mm"),
             "paper_source": fields.get("paper_source") or "sam2",
             "a4_orientation": fields.get("a4_orientation") or "auto",
+            "plate_point_ratio": fields.get("plate_point_ratio"),
+            "paper_point_ratio": fields.get("paper_point_ratio"),
             "use_plate_perspective": 1 if fields.get("use_plate_perspective") else 0,
             "dxf_notch_fill_enabled": 1 if fields.get("dxf_notch_fill_enabled") else 0,
             "dxf_notch_fill_max_width_mm": float(fields.get("dxf_notch_fill_max_width_mm") or 80.0),
@@ -289,6 +297,8 @@ class DatasetStore:
             "dxf_target_y_mm",
             "paper_source",
             "a4_orientation",
+            "plate_point_ratio",
+            "paper_point_ratio",
             "use_plate_perspective",
             "dxf_notch_fill_enabled",
             "dxf_notch_fill_max_width_mm",
