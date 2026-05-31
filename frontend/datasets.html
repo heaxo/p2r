@@ -424,6 +424,48 @@
       color: #b91c1c;
     }
 
+    .item-progress {
+      display: grid;
+      gap: 3px;
+      margin-top: 6px;
+    }
+
+    .item-progress-track {
+      height: 6px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #e5e7eb;
+    }
+
+    .item-progress-fill {
+      width: 0;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--app-blue);
+      transition: width .24s ease;
+    }
+
+    .item-progress.is-active .item-progress-fill {
+      background-image: linear-gradient(
+        45deg,
+        rgba(255, 255, 255, .35) 25%,
+        transparent 25%,
+        transparent 50%,
+        rgba(255, 255, 255, .35) 50%,
+        rgba(255, 255, 255, .35) 75%,
+        transparent 75%,
+        transparent
+      );
+      background-size: 18px 18px;
+      animation: progress-stripes .7s linear infinite;
+    }
+
+    @keyframes progress-stripes {
+      to {
+        background-position: 18px 0;
+      }
+    }
+
     .preview-image {
       width: 78px;
       height: 56px;
@@ -908,6 +950,7 @@
       importStartedAt: 0,
       importDurationMs: 0,
       importInProgress: false,
+      itemRenderKeys: new Map(),
     };
 
     const els = {
@@ -1144,6 +1187,7 @@
       state.selectedId = null;
       state.selected = null;
       state.editingItem = null;
+      setMessage(els.detailMessage, '');
       renderSelectedDataset();
     }
 
@@ -1168,6 +1212,7 @@
         els.emptyItems.hidden = false;
         els.itemsTableWrap.hidden = true;
         els.itemsBody.innerHTML = '';
+        state.itemRenderKeys.clear();
         hideExpertProgress();
         return;
       }
@@ -1181,40 +1226,109 @@
     function renderItems(items) {
       els.emptyItems.hidden = items.length > 0;
       els.itemsTableWrap.hidden = items.length === 0;
-      els.itemsBody.innerHTML = '';
+      const existingRows = new Map();
+      els.itemsBody.querySelectorAll('tr[data-item-id]').forEach(row => {
+        existingRows.set(row.dataset.itemId, row);
+      });
+      const nextIds = new Set();
+
       for (const item of items) {
-        const tr = document.createElement('tr');
-        const imageHtml = item.urls && item.urls.image
-          ? `<a href="${item.urls.image}" target="_blank"><img class="preview-image" src="${item.urls.image}" alt=""></a>`
-          : `<div class="small-muted">${escapeHtml(item.original_filename || '')}</div>`;
-        tr.innerHTML = `
-          <td class="image-col">${imageHtml}</td>
-          <td class="plate-col">
-            <div class="fw-semibold plate-title" title="${escapeHtml(item.plate_no || item.original_filename || item.id)}">${escapeHtml(item.plate_no || item.original_filename || item.id)}</div>
-            <div class="small-muted">数量：${formatNumber(item.quantity)} · ${escapeHtml(item.material || '-')}${item.thickness_mm ? ` · ${item.thickness_mm} mm` : ''}</div>
-          </td>
-          <td class="status-col">
-            ${statusBadge(item.status)}
-            <div class="small-muted mt-1">${item.progress || 0}% ${escapeHtml(item.message || '')}</div>
-          </td>
-          <td class="dxf-col dxf-cell">${buildDxfCell(item)}</td>
-          <td class="dimension-col">
-            ${buildDimensionsCell(item)}
-          </td>
-          <td class="recognition-col">
-            ${buildRecognitionParamsCell(item)}
-          </td>
-          <td class="result-col">${buildOtherResultLinks(item)}</td>
-          <td class="actions-col actions-cell">
-            <div class="item-actions">
-              <button class="btn btn-outline-secondary" type="button" data-action="edit" data-id="${item.id}">${iconSvg('edit')}编辑</button>
-              ${item.status === 'completed' ? `<button class="btn btn-outline-secondary" type="button" data-action="clear-recognition" data-id="${item.id}">${iconSvg('rotate')}清除状态</button>` : ''}
-              <button class="btn btn-outline-danger" type="button" data-action="delete" data-id="${item.id}">${iconSvg('trash')}删除</button>
-            </div>
-          </td>
-        `;
+        const itemId = String(item.id);
+        nextIds.add(itemId);
+        let tr = existingRows.get(itemId);
+        if (!tr) {
+          tr = document.createElement('tr');
+          tr.dataset.itemId = itemId;
+        }
+        const renderKey = itemRenderKey(item);
+        if (state.itemRenderKeys.get(itemId) !== renderKey) {
+          tr.innerHTML = buildItemRowHtml(item);
+          state.itemRenderKeys.set(itemId, renderKey);
+        }
         els.itemsBody.appendChild(tr);
       }
+
+      for (const [itemId, row] of existingRows) {
+        if (!nextIds.has(itemId)) {
+          row.remove();
+          state.itemRenderKeys.delete(itemId);
+        }
+      }
+    }
+
+    function itemRenderKey(item) {
+      return JSON.stringify({
+        id: item.id,
+        image: item.urls && item.urls.image,
+        status: item.status,
+        progress: item.progress || 0,
+        message: item.message || '',
+        dxf: item.urls && item.urls.dxf,
+        dxfPreview: item.urls && item.urls.dxf_preview,
+        plateNo: item.plate_no || '',
+        filename: item.original_filename || '',
+        quantity: item.quantity ?? '',
+        material: item.material || '',
+        thickness: item.thickness_mm ?? '',
+        size1: item.dxf_target_size_1_mm ?? '',
+        size2: item.dxf_target_size_2_mm ?? '',
+        targetX: item.dxf_target_x_mm ?? '',
+        targetY: item.dxf_target_y_mm ?? '',
+        paperSource: item.paper_source || '',
+        a4Orientation: item.a4_orientation || '',
+        usePlatePerspective: !!item.use_plate_perspective,
+        notchEnabled: !!item.dxf_notch_fill_enabled,
+        notchWidth: item.dxf_notch_fill_max_width_mm ?? '',
+        notchDepth: item.dxf_notch_fill_max_depth_mm ?? '',
+      });
+    }
+
+    function buildItemRowHtml(item) {
+      const imageHtml = item.urls && item.urls.image
+        ? `<a href="${item.urls.image}" target="_blank"><img class="preview-image" src="${item.urls.image}" alt="" loading="lazy" decoding="async"></a>`
+        : `<div class="small-muted">${escapeHtml(item.original_filename || '')}</div>`;
+      return `
+        <td class="image-col">${imageHtml}</td>
+        <td class="plate-col">
+          <div class="fw-semibold plate-title" title="${escapeHtml(item.plate_no || item.original_filename || item.id)}">${escapeHtml(item.plate_no || item.original_filename || item.id)}</div>
+          <div class="small-muted">数量：${formatNumber(item.quantity)} · ${escapeHtml(item.material || '-')}${item.thickness_mm ? ` · ${item.thickness_mm} mm` : ''}</div>
+        </td>
+        <td class="status-col">
+          ${statusBadge(item.status)}
+          ${itemProgress(item)}
+        </td>
+        <td class="dxf-col dxf-cell">${buildDxfCell(item)}</td>
+        <td class="dimension-col">
+          ${buildDimensionsCell(item)}
+        </td>
+        <td class="recognition-col">
+          ${buildRecognitionParamsCell(item)}
+        </td>
+        <td class="result-col">${buildOtherResultLinks(item)}</td>
+        <td class="actions-col actions-cell">
+          <div class="item-actions">
+            <button class="btn btn-outline-secondary" type="button" data-action="edit" data-id="${item.id}">${iconSvg('edit')}编辑</button>
+            ${item.status === 'completed' ? `<button class="btn btn-outline-secondary" type="button" data-action="clear-recognition" data-id="${item.id}">${iconSvg('rotate')}清除状态</button>` : ''}
+            <button class="btn btn-outline-danger" type="button" data-action="delete" data-id="${item.id}">${iconSvg('trash')}删除</button>
+          </div>
+        </td>
+      `;
+    }
+
+    function itemProgress(item) {
+      const rawProgress = Number(item.progress || 0);
+      const progress = Math.max(0, Math.min(100, Number.isFinite(rawProgress) ? rawProgress : 0));
+      const active = ['queued', 'processing'].includes(item.status);
+      const displayProgress = active ? Math.max(progress, 8) : progress;
+      const text = `${Math.round(progress)}% ${item.message || ''}`.trim();
+      return `
+        <div class="item-progress ${active ? 'is-active' : ''}">
+          <div class="item-progress-track" aria-label="${escapeHtml(text)}">
+            <div class="item-progress-fill" style="width: ${displayProgress}%"></div>
+          </div>
+          <div class="small-muted">${escapeHtml(text)}</div>
+        </div>
+      `;
     }
 
     function buildDxfCell(item) {
@@ -1461,6 +1575,7 @@
         const currentIndex = state.datasets.findIndex(item => item.id === state.selectedId);
         const nextDataset = state.datasets[currentIndex + 1] || state.datasets[currentIndex - 1];
         await loadDatasets(nextDataset ? nextDataset.id : null);
+        setMessage(els.detailMessage, '已删除', 'success');
       } catch (error) {
         showError(els.detailMessage, error);
       }
