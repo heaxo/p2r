@@ -461,6 +461,7 @@
 
               <div class="point-toolbar">
                 <button type="button" class="btn-small" id="selectPlatePointBtn">选择钢板辅助点</button>
+                <button type="button" class="btn-small" id="selectPaperPointBtn">选择A4辅助点</button>
                 <button type="button" class="btn-small" id="selectPaperPointsBtn">选择A4四角</button>
                 <button type="button" class="btn-small" id="clearPlatePointBtn">清空钢板点</button>
                 <button type="button" class="btn-small" id="clearPaperPointsBtn">清空A4点</button>
@@ -539,6 +540,12 @@
               <label for="user_point_ratio">手动钢板点，可选</label>
               <input id="user_point_ratio" name="user_point_ratio" placeholder="例如 0.5,0.5" />
               <div class="hint">点击“选择钢板辅助点”后，在图片上点钢板内部位置，会自动填入这里。</div>
+            </div>
+
+            <div class="field full">
+              <label for="paper_user_point_ratio">手动A4纸点，可选</label>
+              <input id="paper_user_point_ratio" name="paper_user_point_ratio" placeholder="例如 0.5,0.5" />
+              <div class="hint">点击“选择A4辅助点”后，在图片上点A4纸内部位置，会优先用于 SAM2 分割A4纸。</div>
             </div>
 
             <div class="field full">
@@ -637,6 +644,7 @@
     const previewBox = document.getElementById('previewBox');
 
     const selectPlatePointBtn = document.getElementById('selectPlatePointBtn');
+    const selectPaperPointBtn = document.getElementById('selectPaperPointBtn');
     const selectPaperPointsBtn = document.getElementById('selectPaperPointsBtn');
     const clearPlatePointBtn = document.getElementById('clearPlatePointBtn');
     const clearPaperPointsBtn = document.getElementById('clearPaperPointsBtn');
@@ -653,6 +661,7 @@
     let previewObjectUrl = '';
     let pointMode = 'none';
     let platePointRatio = null;
+    let paperUserPointRatio = null;
     let paperPointRatios = [];
 
     const urlLikeImageKeys = new Set([
@@ -716,6 +725,11 @@
           `${platePointRatio.x.toFixed(6)},${platePointRatio.y.toFixed(6)}`;
       }
 
+      if (paperUserPointRatio) {
+        document.getElementById('paper_user_point_ratio').value =
+          `${paperUserPointRatio.x.toFixed(6)},${paperUserPointRatio.y.toFixed(6)}`;
+      }
+
       if (paperPointRatios.length > 0) {
         document.getElementById('paper_points').value =
           paperPointRatios.map(ratioToPixelText).join(';');
@@ -732,6 +746,10 @@
         ? `<div class="point-marker" style="left:${platePointRatio.x * 100}%;top:${platePointRatio.y * 100}%;"></div>`
         : '';
 
+      const paperUserMarker = paperUserPointRatio
+        ? `<div class="paper-marker" style="left:${paperUserPointRatio.x * 100}%;top:${paperUserPointRatio.y * 100}%;">A</div>`
+        : '';
+
       const paperMarkers = paperPointRatios.map((p, idx) => {
         return `<div class="paper-marker" style="left:${p.x * 100}%;top:${p.y * 100}%;">${idx + 1}</div>`;
       }).join('');
@@ -740,6 +758,7 @@
         <div class="preview-wrap">
           <img id="previewImage" src="${previewObjectUrl}" alt="preview" />
           ${plateMarker}
+          ${paperUserMarker}
           ${paperMarkers}
         </div>
       `;
@@ -755,10 +774,13 @@
       pointMode = mode;
 
       selectPlatePointBtn.classList.toggle('active', mode === 'plate');
+      selectPaperPointBtn.classList.toggle('active', mode === 'paper_single');
       selectPaperPointsBtn.classList.toggle('active', mode === 'paper');
 
       if (mode === 'plate') {
         pointHint.textContent = '当前模式：选择钢板辅助点。请点击钢板内部任意一点。';
+      } else if (mode === 'paper_single') {
+        pointHint.textContent = '当前模式：选择A4辅助点。请点击A4纸内部任意一点。';
       } else if (mode === 'paper') {
         pointHint.textContent = `当前模式：选择A4四角。请依次点击4个角，当前已选 ${paperPointRatios.length}/4。`;
       } else {
@@ -785,6 +807,13 @@
         platePointRatio = point;
         renderPreview();
         setStatus(`已选择钢板辅助点：${point.x.toFixed(6)},${point.y.toFixed(6)}`);
+        return;
+      }
+
+      if (pointMode === 'paper_single') {
+        paperUserPointRatio = point;
+        renderPreview();
+        setStatus(`已选择A4辅助点：${point.x.toFixed(6)},${point.y.toFixed(6)}`);
         return;
       }
 
@@ -835,6 +864,7 @@
       appendOptional(fd, 'imgsz');
       appendOptional(fd, 'conf');
       appendOptional(fd, 'user_point_ratio');
+      appendOptional(fd, 'paper_user_point_ratio');
       appendOptional(fd, 'paper_points');
 
       fd.append('paper_sam2_yolo_fallback', document.getElementById('paper_sam2_yolo_fallback').checked ? 'true' : 'false');
@@ -997,6 +1027,7 @@
         previewBox.innerHTML = '<span class="hint">选择图片后这里会显示预览</span>';
         previewObjectUrl = '';
         platePointRatio = null;
+        paperUserPointRatio = null;
         paperPointRatios = [];
         return;
       }
@@ -1007,8 +1038,10 @@
 
       previewObjectUrl = URL.createObjectURL(file);
       platePointRatio = null;
+      paperUserPointRatio = null;
       paperPointRatios = [];
       document.getElementById('user_point_ratio').value = '';
+      document.getElementById('paper_user_point_ratio').value = '';
       document.getElementById('paper_points').value = '';
 
       renderPreview();
@@ -1018,6 +1051,7 @@
     previewBox.addEventListener('click', handlePreviewClick);
 
     selectPlatePointBtn.addEventListener('click', () => setPointMode('plate'));
+    selectPaperPointBtn.addEventListener('click', () => setPointMode('paper_single'));
     selectPaperPointsBtn.addEventListener('click', () => setPointMode('paper'));
 
     clearPlatePointBtn.addEventListener('click', () => {
@@ -1028,7 +1062,9 @@
     });
 
     clearPaperPointsBtn.addEventListener('click', () => {
+      paperUserPointRatio = null;
       paperPointRatios = [];
+      document.getElementById('paper_user_point_ratio').value = '';
       document.getElementById('paper_points').value = '';
       renderPreview();
       setStatus('已清空A4四角点。');

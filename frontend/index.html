@@ -267,6 +267,18 @@
       white-space: nowrap;
     }
 
+    .selected-thumb-button {
+      width: 52px;
+      height: 42px;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 0;
+      background: #f8fafc;
+      position: relative;
+      overflow: hidden;
+      min-height: 42px;
+    }
+
     .selected-thumb,
     .task-thumb {
       width: 52px;
@@ -276,6 +288,33 @@
       object-fit: cover;
       background: #f8fafc;
       display: block;
+    }
+
+    .selected-thumb-button .selected-thumb {
+      border: 0;
+      border-radius: 0;
+    }
+
+    .selected-point-dot,
+    .picker-point-dot {
+      position: absolute;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+    }
+
+    .selected-point-dot.plate,
+    .picker-point-dot.plate {
+      border: 2px solid #ef4444;
+      background: rgba(239, 68, 68, .22);
+    }
+
+    .selected-point-dot.paper,
+    .picker-point-dot.paper {
+      border: 2px solid #22c55e;
+      background: rgba(34, 197, 94, .22);
     }
 
     .selected-options {
@@ -334,6 +373,96 @@
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 6px;
+    }
+
+    .selected-point-actions {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 6px;
+    }
+
+    .selected-point-status {
+      grid-column: 1 / -1;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    .point-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 18px;
+      background: rgba(15, 23, 42, .48);
+    }
+
+    .point-modal[hidden] {
+      display: none;
+    }
+
+    .point-dialog {
+      width: min(980px, 96vw);
+      max-height: 92vh;
+      display: grid;
+      grid-template-rows: auto auto minmax(0, 1fr);
+      background: #fff;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      overflow: hidden;
+    }
+
+    .point-dialog-head,
+    .point-dialog-tools {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .point-dialog-title {
+      min-width: 0;
+      font-weight: 800;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .point-mode-actions {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .point-mode-actions .active {
+      background: var(--primary);
+      color: #fff;
+    }
+
+    .point-stage {
+      min-height: 240px;
+      overflow: auto;
+      padding: 12px;
+      background: #f8fafc;
+      text-align: center;
+    }
+
+    .point-stage-wrap {
+      position: relative;
+      display: inline-block;
+      max-width: 100%;
+    }
+
+    .point-stage img {
+      display: block;
+      max-width: 100%;
+      max-height: 70vh;
+      cursor: crosshair;
     }
 
     .actions {
@@ -808,6 +937,24 @@
     </main>
   </div>
 
+  <div class="point-modal" id="pointPickerModal" hidden>
+    <div class="point-dialog">
+      <div class="point-dialog-head">
+        <div class="point-dialog-title" id="pointPickerTitle">选择辅助点</div>
+        <button class="btn-small" type="button" id="closePointPickerBtn">关闭</button>
+      </div>
+      <div class="point-dialog-tools">
+        <div class="point-mode-actions">
+          <button class="btn-small" type="button" id="pickPlatePointBtn">钢板点</button>
+          <button class="btn-small" type="button" id="pickPaperPointBtn">A4纸点</button>
+          <button class="btn-small" type="button" id="clearPickedPointsBtn">清空</button>
+        </div>
+        <div class="subtext" id="pointPickerHint">点击图片设置点位。指定后后台会优先使用该点给 SAM2。</div>
+      </div>
+      <div class="point-stage" id="pointPickerStage"></div>
+    </div>
+  </div>
+
   <script>
     const AUTH_TOKEN = 'tk_c2VjcmV0LXJhbmRvbS10b2tlbi0xMjM0NTY3OA';
     const CLIENT_KEY = 'plate_dxf_client_id';
@@ -824,6 +971,14 @@
     const taskTableWrap = document.getElementById('taskTableWrap');
     const previewPanel = document.getElementById('previewPanel');
     const clientIdText = document.getElementById('clientIdText');
+    const pointPickerModal = document.getElementById('pointPickerModal');
+    const pointPickerTitle = document.getElementById('pointPickerTitle');
+    const pointPickerHint = document.getElementById('pointPickerHint');
+    const pointPickerStage = document.getElementById('pointPickerStage');
+    const closePointPickerBtn = document.getElementById('closePointPickerBtn');
+    const pickPlatePointBtn = document.getElementById('pickPlatePointBtn');
+    const pickPaperPointBtn = document.getElementById('pickPaperPointBtn');
+    const clearPickedPointsBtn = document.getElementById('clearPickedPointsBtn');
 
     let selectedFiles = [];
     let tasks = [];
@@ -831,6 +986,8 @@
     let pollingTimer = null;
     let detailOpenByTask = {};
     let isDownloadingDxf = false;
+    let pointPickerFileId = '';
+    let pointPickerMode = 'plate';
 
     const detailImages = [
       ['upload', '原图'],
@@ -924,6 +1081,8 @@
         previewUrl: URL.createObjectURL(file),
         usePlatePerspective: false,
         enableNotchRepair: false,
+        platePointRatio: null,
+        paperPointRatio: null,
         notchWidth: 80,
         notchDepth: 25,
         targetSize1: '',
@@ -943,7 +1102,11 @@
       selectedFilesBox.className = 'selected-files';
       selectedFilesBox.innerHTML = selectedFiles.map(item => `
         <div class="selected-file" data-file-id="${escapeHtml(item.id)}">
-          <img class="selected-thumb" src="${escapeHtml(item.previewUrl)}" alt="${escapeHtml(item.file.name)}">
+          <button class="selected-thumb-button" type="button" data-action="pick-file-points" data-mode="plate" title="点击设置钢板/A4纸辅助点">
+            <img class="selected-thumb" src="${escapeHtml(item.previewUrl)}" alt="${escapeHtml(item.file.name)}">
+            ${item.platePointRatio ? `<span class="selected-point-dot plate" style="left:${item.platePointRatio.x * 100}%;top:${item.platePointRatio.y * 100}%;"></span>` : ''}
+            ${item.paperPointRatio ? `<span class="selected-point-dot paper" style="left:${item.paperPointRatio.x * 100}%;top:${item.paperPointRatio.y * 100}%;"></span>` : ''}
+          </button>
           <div>
             <div class="selected-file-name" title="${escapeHtml(item.file.name)}">${escapeHtml(item.file.name)}</div>
             <div class="subtext">${escapeHtml(formatSize(item.file.size))}</div>
@@ -982,10 +1145,23 @@
                   <input type="number" min="10" max="250" step="5" value="${escapeHtml(item.notchDepth)}" data-file-option="notchDepth" title="最大深度 mm">
                 </div>
               ` : ''}
+              <div class="selected-point-actions">
+                <button class="btn-small" type="button" data-action="pick-file-points" data-mode="plate">钢板点</button>
+                <button class="btn-small" type="button" data-action="pick-file-points" data-mode="paper">A4点</button>
+                <button class="btn-small" type="button" data-action="clear-file-points">清点</button>
+              </div>
+              <div class="selected-point-status">
+                钢板点：${item.platePointRatio ? `${item.platePointRatio.x.toFixed(3)},${item.platePointRatio.y.toFixed(3)}` : '自动'}
+                / A4点：${item.paperPointRatio ? `${item.paperPointRatio.x.toFixed(3)},${item.paperPointRatio.y.toFixed(3)}` : '自动'}
+              </div>
             </div>
           </div>
         </div>
       `).join('');
+    }
+
+    function ratioPointText(point) {
+      return point ? `${point.x.toFixed(6)},${point.y.toFixed(6)}` : '';
     }
 
     function optionalPositiveNumber(value, label) {
@@ -1031,6 +1207,8 @@
         }
 
         return {
+          user_point_ratio: ratioPointText(item.platePointRatio),
+          paper_user_point_ratio: ratioPointText(item.paperPointRatio),
           filename: item.file.name,
           use_plate_perspective: Boolean(item.usePlatePerspective),
           dxf_notch_fill_enabled: Boolean(item.enableNotchRepair),
@@ -1044,6 +1222,71 @@
       })));
 
       return fd;
+    }
+
+    function currentPointPickerItem() {
+      return selectedFiles.find(item => item.id === pointPickerFileId) || null;
+    }
+
+    function setPointPickerMode(mode) {
+      pointPickerMode = mode === 'paper' ? 'paper' : 'plate';
+      pickPlatePointBtn.classList.toggle('active', pointPickerMode === 'plate');
+      pickPaperPointBtn.classList.toggle('active', pointPickerMode === 'paper');
+      pointPickerHint.textContent = pointPickerMode === 'plate'
+        ? '当前模式：点击钢板内部一点。保存后后台会优先把该点提供给 SAM2 分割钢板。'
+        : '当前模式：点击A4纸内部一点。保存后后台会优先把该点提供给 SAM2 分割A4纸。';
+    }
+
+    function renderPointPicker() {
+      const item = currentPointPickerItem();
+      if (!item) {
+        pointPickerStage.innerHTML = '<div class="empty-table">没有选中的图片。</div>';
+        return;
+      }
+      pointPickerTitle.textContent = item.file.name;
+      pointPickerStage.innerHTML = `
+        <div class="point-stage-wrap">
+          <img id="pointPickerImage" src="${escapeHtml(item.previewUrl)}" alt="${escapeHtml(item.file.name)}">
+          ${item.platePointRatio ? `<span class="picker-point-dot plate" style="left:${item.platePointRatio.x * 100}%;top:${item.platePointRatio.y * 100}%;"></span>` : ''}
+          ${item.paperPointRatio ? `<span class="picker-point-dot paper" style="left:${item.paperPointRatio.x * 100}%;top:${item.paperPointRatio.y * 100}%;"></span>` : ''}
+        </div>
+      `;
+    }
+
+    function openPointPicker(item, mode = 'plate') {
+      pointPickerFileId = item.id;
+      pointPickerModal.hidden = false;
+      setPointPickerMode(mode);
+      renderPointPicker();
+    }
+
+    function closePointPicker() {
+      pointPickerModal.hidden = true;
+      pointPickerFileId = '';
+    }
+
+    function handlePointPickerClick(event) {
+      const img = event.target.closest('#pointPickerImage');
+      const item = currentPointPickerItem();
+      if (!img || !item) return;
+
+      const rect = img.getBoundingClientRect();
+      const x = (event.clientX - rect.left) / rect.width;
+      const y = (event.clientY - rect.top) / rect.height;
+      if (x < 0 || x > 1 || y < 0 || y > 1) return;
+
+      const point = {
+        x: Math.max(0, Math.min(1, x)),
+        y: Math.max(0, Math.min(1, y)),
+      };
+      if (pointPickerMode === 'paper') {
+        item.paperPointRatio = point;
+      } else {
+        item.platePointRatio = point;
+      }
+      renderSelectedFiles();
+      renderPointPicker();
+      setStatus(`已设置 ${pointPickerMode === 'paper' ? 'A4纸' : '钢板'} 辅助点：${ratioPointText(point)}`, 'ok');
     }
 
     async function fetchJson(url, options = {}) {
@@ -1445,6 +1688,25 @@
       setStatus(selectedFiles.length ? `已选择 ${selectedFiles.length} 张图片。` : '等待选择图片。');
     });
 
+    selectedFilesBox.addEventListener('click', event => {
+      const button = event.target.closest('button[data-action]');
+      if (!button) return;
+      const row = button.closest('[data-file-id]');
+      const item = row ? selectedFiles.find(file => file.id === row.dataset.fileId) : null;
+      if (!item) return;
+
+      if (button.dataset.action === 'pick-file-points') {
+        openPointPicker(item, button.dataset.mode || 'plate');
+        return;
+      }
+      if (button.dataset.action === 'clear-file-points') {
+        item.platePointRatio = null;
+        item.paperPointRatio = null;
+        renderSelectedFiles();
+        setStatus(`${item.file.name} 的手动点已清空。`);
+      }
+    });
+
     selectedFilesBox.addEventListener('change', event => {
       const target = event.target;
       const option = target && target.dataset ? target.dataset.fileOption : '';
@@ -1532,6 +1794,22 @@
 
     refreshBtn.addEventListener('click', () => loadTasks(false));
     downloadDxfBtn.addEventListener('click', batchDownloadDxf);
+    closePointPickerBtn.addEventListener('click', closePointPicker);
+    pointPickerModal.addEventListener('click', event => {
+      if (event.target === pointPickerModal) closePointPicker();
+    });
+    pickPlatePointBtn.addEventListener('click', () => setPointPickerMode('plate'));
+    pickPaperPointBtn.addEventListener('click', () => setPointPickerMode('paper'));
+    clearPickedPointsBtn.addEventListener('click', () => {
+      const item = currentPointPickerItem();
+      if (!item) return;
+      item.platePointRatio = null;
+      item.paperPointRatio = null;
+      renderSelectedFiles();
+      renderPointPicker();
+      setStatus(`${item.file.name} 的手动点已清空。`);
+    });
+    pointPickerStage.addEventListener('click', handlePointPickerClick);
 
     clearBtn.addEventListener('click', async () => {
       if (!confirm('确认清除当前客户端的全部上传记录和结果文件？')) {

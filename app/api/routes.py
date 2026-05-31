@@ -132,7 +132,8 @@ def _dataset_item_fields(
 
 @router.get("/datasets", dependencies=[Depends(require_token)])
 async def list_datasets() -> dict:
-    return {"ok": True, "datasets": dataset_service.list_datasets()}
+    datasets = await run_in_threadpool(dataset_service.list_datasets)
+    return {"ok": True, "datasets": datasets}
 
 
 @router.post("/datasets", dependencies=[Depends(require_token)])
@@ -140,7 +141,7 @@ async def create_dataset(
     name: Annotated[str | None, Form(description="可选，数据集名称；为空时使用年月日时分秒")] = None,
 ) -> dict:
     try:
-        dataset = dataset_service.create_dataset(name)
+        dataset = await run_in_threadpool(dataset_service.create_dataset, name)
         return {"ok": True, "dataset": dataset}
     except DatasetNameConflict as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
@@ -176,7 +177,8 @@ async def import_dataset_excel(
 @router.get("/datasets/{dataset_id}", dependencies=[Depends(require_token)])
 async def get_dataset(dataset_id: str) -> dict:
     try:
-        return {"ok": True, "dataset": dataset_service.get_dataset_detail(dataset_id)}
+        dataset = await run_in_threadpool(dataset_service.get_dataset_detail, dataset_id)
+        return {"ok": True, "dataset": dataset}
     except KeyError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据集不存在") from exc
 
@@ -187,7 +189,7 @@ async def update_dataset_import_settings(
     expert_importer: Annotated[str, Form(description="导入器：Procesos 或 Masterlink")] = "Procesos",
 ) -> dict:
     try:
-        dataset = dataset_service.update_import_settings(dataset_id, expert_importer)
+        dataset = await run_in_threadpool(dataset_service.update_import_settings, dataset_id, expert_importer)
         return {"ok": True, "dataset": dataset}
     except KeyError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据集不存在") from exc
@@ -201,7 +203,8 @@ async def copy_dataset(
     name: Annotated[str | None, Form(description="可选，新数据集名称")] = None,
 ) -> dict:
     try:
-        return {"ok": True, "dataset": dataset_service.copy_dataset(dataset_id, name)}
+        dataset = await run_in_threadpool(dataset_service.copy_dataset, dataset_id, name)
+        return {"ok": True, "dataset": dataset}
     except DatasetNameConflict as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except KeyError as exc:
@@ -211,8 +214,9 @@ async def copy_dataset(
 @router.delete("/datasets/{dataset_id}", dependencies=[Depends(require_token)])
 async def delete_dataset(dataset_id: str) -> dict:
     try:
-        dataset_service.delete_dataset(dataset_id)
-        return {"ok": True, "datasets": dataset_service.list_datasets()}
+        await run_in_threadpool(dataset_service.delete_dataset, dataset_id)
+        datasets = await run_in_threadpool(dataset_service.list_datasets)
+        return {"ok": True, "datasets": datasets}
     except KeyError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据集不存在") from exc
     except ValueError as exc:
@@ -225,7 +229,8 @@ async def recognize_dataset(
     sam_model: Annotated[str | None, Form(description="可选，SAM2模型名；不传则读取SAM_MODEL")] = None,
 ) -> dict:
     try:
-        return {"ok": True, "dataset": dataset_service.enqueue_recognition(dataset_id, sam_model=sam_model)}
+        dataset = await run_in_threadpool(dataset_service.enqueue_recognition, dataset_id, sam_model=sam_model)
+        return {"ok": True, "dataset": dataset}
     except KeyError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据集不存在") from exc
     except ValueError as exc:
@@ -235,7 +240,8 @@ async def recognize_dataset(
 @router.post("/datasets/{dataset_id}/clear-recognition", dependencies=[Depends(require_token)])
 async def clear_dataset_recognition(dataset_id: str) -> dict:
     try:
-        return {"ok": True, "dataset": dataset_service.clear_dataset_recognition(dataset_id)}
+        dataset = await run_in_threadpool(dataset_service.clear_dataset_recognition, dataset_id)
+        return {"ok": True, "dataset": dataset}
     except KeyError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据集不存在") from exc
     except ValueError as exc:
@@ -314,7 +320,8 @@ async def add_dataset_item(
                 dxf_notch_fill_max_depth_mm=dxf_notch_fill_max_depth_mm,
             ),
         )
-        return {"ok": True, "item": item, "dataset": dataset_service.get_dataset_detail(dataset_id)}
+        dataset = await run_in_threadpool(dataset_service.get_dataset_detail, dataset_id)
+        return {"ok": True, "item": item, "dataset": dataset}
     except KeyError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据集不存在") from exc
     except ValueError as exc:
@@ -367,7 +374,8 @@ async def update_dataset_item(
                 dxf_notch_fill_max_depth_mm=dxf_notch_fill_max_depth_mm,
             ),
         )
-        return {"ok": True, "item": item, "dataset": dataset_service.get_dataset_detail(dataset_id)}
+        dataset = await run_in_threadpool(dataset_service.get_dataset_detail, dataset_id)
+        return {"ok": True, "item": item, "dataset": dataset}
     except KeyError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据不存在") from exc
     except ValueError as exc:
@@ -377,8 +385,9 @@ async def update_dataset_item(
 @router.delete("/datasets/{dataset_id}/items/{item_id}", dependencies=[Depends(require_token)])
 async def delete_dataset_item(dataset_id: str, item_id: str) -> dict:
     try:
-        dataset_service.delete_item(dataset_id, item_id)
-        return {"ok": True, "dataset": dataset_service.get_dataset_detail(dataset_id)}
+        await run_in_threadpool(dataset_service.delete_item, dataset_id, item_id)
+        dataset = await run_in_threadpool(dataset_service.get_dataset_detail, dataset_id)
+        return {"ok": True, "dataset": dataset}
     except KeyError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据不存在") from exc
 
@@ -386,7 +395,8 @@ async def delete_dataset_item(dataset_id: str, item_id: str) -> dict:
 @router.post("/datasets/{dataset_id}/items/{item_id}/clear-recognition", dependencies=[Depends(require_token)])
 async def clear_dataset_item_recognition(dataset_id: str, item_id: str) -> dict:
     try:
-        return {"ok": True, "dataset": dataset_service.clear_item_recognition(dataset_id, item_id)}
+        dataset = await run_in_threadpool(dataset_service.clear_item_recognition, dataset_id, item_id)
+        return {"ok": True, "dataset": dataset}
     except KeyError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据不存在") from exc
     except ValueError as exc:
@@ -525,6 +535,11 @@ async def upload_tasks(
                 if target_y is not None:
                     task_params["dxf_target_y_mm"] = target_y
 
+            if option.get("user_point_ratio"):
+                task_params["user_point_ratio"] = str(option.get("user_point_ratio"))
+            if option.get("paper_user_point_ratio"):
+                task_params["paper_user_point_ratio"] = str(option.get("paper_user_point_ratio"))
+
             tasks.append(service.enqueue_task(
                 client_id=client_id,
                 image_path=image_path,
@@ -543,7 +558,8 @@ async def list_tasks(
     x_client_id: Annotated[str | None, Header(alias="X-Client-Id")] = None,
 ) -> dict:
     client_id = _require_client_id(x_client_id)
-    return {"ok": True, "client_id": client_id, "tasks": service.list_client_tasks(client_id)}
+    tasks = await run_in_threadpool(service.list_client_tasks, client_id)
+    return {"ok": True, "client_id": client_id, "tasks": tasks}
 
 
 @router.get("/tasks/download-dxf", dependencies=[Depends(require_token)])
@@ -551,7 +567,7 @@ async def download_client_dxf(
     x_client_id: Annotated[str | None, Header(alias="X-Client-Id")] = None,
 ) -> StreamingResponse:
     client_id = _require_client_id(x_client_id)
-    tasks = service.list_client_tasks(client_id)
+    tasks = await run_in_threadpool(service.list_client_tasks, client_id)
 
     zip_buffer = io.BytesIO()
     added = 0
@@ -606,7 +622,7 @@ async def get_task(
     x_client_id: Annotated[str | None, Header(alias="X-Client-Id")] = None,
 ) -> dict:
     client_id = _require_client_id(x_client_id)
-    task = service.get_client_task(client_id, task_id)
+    task = await run_in_threadpool(service.get_client_task, client_id, task_id)
     if task is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="任务不存在")
     return {"ok": True, "client_id": client_id, "task": task}
@@ -617,7 +633,7 @@ async def clear_tasks(
     x_client_id: Annotated[str | None, Header(alias="X-Client-Id")] = None,
 ) -> dict:
     client_id = _require_client_id(x_client_id)
-    deleted = service.clear_client_tasks(client_id)
+    deleted = await run_in_threadpool(service.clear_client_tasks, client_id)
     return {"ok": True, "client_id": client_id, "deleted": deleted}
 
 

@@ -773,12 +773,9 @@ class DatasetService:
         paths = dict((result or {}).get("paths") or {})
         dxf_path = paths.get("dxf")
         if dxf_path and not paths.get("dxf_preview"):
-            try:
-                preview_path = create_dxf_preview(str(dxf_path))
-                if preview_path:
-                    paths["dxf_preview"] = str(preview_path)
-            except Exception as exc:
-                logger.warning("Dataset DXF preview generation failed: item_id={}, dxf_path={}, error={}", row.get("id"), dxf_path, exc)
+            preview_path = Path(str(dxf_path)).with_name("dxf_preview.png")
+            if preview_path.exists():
+                paths["dxf_preview"] = str(preview_path)
         urls.update({key: url for key, value in paths.items() if (url := self.measure_service._path_to_url(str(value)))})
         image_url = self.measure_service._path_to_url(str(row.get("image_path") or ""))
         if image_url:

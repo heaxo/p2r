@@ -28,66 +28,11 @@
 
     .desktop-frame {
       width: calc(100% - 16px);
-      height: calc(100vh - 28px);
+      height: 100vh;
       margin: 0 auto;
-      padding: 10px 0 18px;
+      padding: 8px 0;
       display: grid;
-      grid-template-rows: auto 1fr;
-    }
-
-    .titlebar {
-      background: #fff;
-      border: 1px solid var(--app-border);
-      border-radius: 8px;
-      box-shadow: 0 1px 3px rgba(15, 23, 42, .08);
-      margin-bottom: 10px;
-    }
-
-    .titlebar-inner {
-      height: 50px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      padding: 0 12px;
-    }
-
-    .app-title {
-      margin: 0;
-      font-size: 18px;
-      line-height: 1.2;
-      font-weight: 700;
-      letter-spacing: 0;
-    }
-
-    .app-nav {
-      display: inline-flex;
-      align-items: center;
-      gap: 2px;
-      border: 1px solid var(--app-border);
-      border-radius: 7px;
-      background: #f8fafc;
-      padding: 3px;
-    }
-
-    .app-nav a {
-      min-width: 92px;
-      min-height: 30px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      border-radius: 5px;
-      color: #344054;
-      text-decoration: none;
-      font-size: 13px;
-      padding: 0 10px;
-    }
-
-    .app-nav a.active {
-      background: #fff;
-      color: var(--app-blue);
-      font-weight: 700;
-      box-shadow: 0 1px 3px rgba(15, 23, 42, .12);
+      grid-template-rows: 1fr;
     }
 
     .workspace {
@@ -203,6 +148,34 @@
       background: #fff;
     }
 
+    .item-filter {
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+      border: 1px solid var(--app-border);
+      border-radius: 7px;
+      background: #f8fafc;
+      padding: 3px;
+    }
+
+    .item-filter button {
+      min-height: 28px;
+      border: 0;
+      border-radius: 5px;
+      background: transparent;
+      color: #344054;
+      font-size: 12px;
+      padding: 0 9px;
+      white-space: nowrap;
+    }
+
+    .item-filter button.active {
+      background: #fff;
+      color: var(--app-blue);
+      font-weight: 700;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, .12);
+    }
+
     .table-wrap {
       min-height: 0;
       overflow: auto;
@@ -248,6 +221,27 @@
       color: #344054;
       border-bottom-color: var(--app-border);
       white-space: nowrap;
+      user-select: none;
+    }
+
+    .data-table th.resizable {
+      position: sticky;
+    }
+
+    .column-resizer {
+      position: absolute;
+      top: 0;
+      right: -3px;
+      width: 8px;
+      height: 100%;
+      cursor: col-resize;
+      z-index: 6;
+      touch-action: none;
+    }
+
+    .column-resizer:hover,
+    .column-resizer.active {
+      background: rgba(45, 87, 155, .18);
     }
 
     .data-table td {
@@ -757,19 +751,6 @@
 </head>
 <body>
   <div class="desktop-frame">
-    <header class="titlebar">
-      <div class="titlebar-inner">
-        <div>
-          <h1 class="app-title">Pic2Remnant</h1>
-          <div class="small-muted">数据集管理</div>
-        </div>
-        <nav class="app-nav" aria-label="页面导航">
-          <a class="active" href="/ui/datasets.html">数据集</a>
-<!--          <a href="/ui/">批量识别</a>-->
-        </nav>
-      </div>
-    </header>
-
     <main class="workspace">
       <aside class="sidebar">
         <div class="sidebar-head">
@@ -820,22 +801,41 @@
         <div class="content-body">
           <div class="table-card">
             <div class="table-card-head">
-              <strong>数据列表</strong>
+              <div class="d-flex align-items-center gap-3">
+                <strong>数据列表</strong>
+                <div id="itemFilter" class="item-filter" aria-label="数据状态筛选">
+                  <button type="button" data-filter="pending">未开始</button>
+                  <button type="button" data-filter="completed">已完成识别</button>
+                  <button type="button" data-filter="failed">识别失败</button>
+                  <button type="button" data-filter="active">正在识别</button>
+                  <button type="button" data-filter="all">全部</button>
+                </div>
+              </div>
               <span id="itemCount" class="small-muted"></span>
             </div>
             <div id="emptyItems" class="empty-state">请选择左侧数据集，或新建数据集后录入数据。</div>
             <div id="itemsTableWrap" class="table-wrap" hidden>
-              <table class="table table-hover table-sm data-table">
+              <table id="dataTable" class="table table-hover table-sm data-table">
+                <colgroup>
+                  <col data-col="image" class="image-col" />
+                  <col data-col="plate" class="plate-col" />
+                  <col data-col="status" class="status-col" />
+                  <col data-col="dxf" class="dxf-col" />
+                  <col data-col="dimension" class="dimension-col" />
+                  <col data-col="recognition" class="recognition-col" />
+                  <col data-col="result" class="result-col" />
+                  <col data-col="actions" class="actions-col" />
+                </colgroup>
                 <thead>
                   <tr>
-                    <th class="image-col">图片</th>
-                    <th class="plate-col">板材信息</th>
-                    <th class="status-col">状态</th>
-                    <th class="dxf-col">DXF</th>
-                    <th class="dimension-col">尺寸设置</th>
-                    <th class="recognition-col">识别参数</th>
-                    <th class="result-col">其他结果</th>
-                    <th class="actions-col">操作</th>
+                    <th class="image-col" data-col="image">图片</th>
+                    <th class="plate-col" data-col="plate">板材信息</th>
+                    <th class="status-col" data-col="status">状态</th>
+                    <th class="dxf-col" data-col="dxf">DXF</th>
+                    <th class="dimension-col" data-col="dimension">尺寸设置</th>
+                    <th class="recognition-col" data-col="recognition">识别参数</th>
+                    <th class="result-col" data-col="result">其他结果</th>
+                    <th class="actions-col" data-col="actions">操作</th>
                   </tr>
                 </thead>
                 <tbody id="itemsBody"></tbody>
@@ -1040,6 +1040,7 @@
       importDurationMs: 0,
       importInProgress: false,
       itemRenderKeys: new Map(),
+      itemFilter: 'pending',
       pointPickingItem: null,
       pointPickingMode: 'plate',
       pointDraft: { plate: '', paper: '' },
@@ -1109,6 +1110,8 @@
       pointPickerMessage: document.getElementById('pointPickerMessage'),
       emptyItems: document.getElementById('emptyItems'),
       itemsTableWrap: document.getElementById('itemsTableWrap'),
+      dataTable: document.getElementById('dataTable'),
+      itemFilter: document.getElementById('itemFilter'),
       itemsBody: document.getElementById('itemsBody'),
       itemCount: document.getElementById('itemCount'),
     };
@@ -1331,8 +1334,37 @@
 
       els.selectedTitle.innerHTML = `<span class="me-2">${escapeHtml(dataset.name)}</span>${statusBadge(dataset.status)}`;
       els.selectedMeta.textContent = `${dataset.item_count || 0} 条数据，完成 ${dataset.completed_count || 0}，未识别 ${items.filter(item => item.status !== 'completed').length}，失败 ${dataset.failed_count || 0}，导入器 ${dataset.expert_importer || 'Procesos'}，创建于 ${formatDate(dataset.created_at)}`;
-      els.itemCount.textContent = `${items.length} 条`;
-      renderItems(items);
+      renderItemFilter(items);
+      const visibleItems = filterItems(items);
+      els.itemCount.textContent = `${visibleItems.length} / ${items.length} 条`;
+      renderItems(visibleItems);
+    }
+
+    function itemFilterKey(item) {
+      if (!item || item.status === 'pending' || item.status === 'unrecognized') return 'pending';
+      if (item.status === 'completed' || item.status === 'recognized') return 'completed';
+      if (item.status === 'failed') return 'failed';
+      if (item.status === 'queued' || item.status === 'processing' || item.status === 'recognizing') return 'active';
+      return 'pending';
+    }
+
+    function filterItems(items) {
+      if (state.itemFilter === 'all') return items;
+      return items.filter(item => itemFilterKey(item) === state.itemFilter);
+    }
+
+    function renderItemFilter(items) {
+      const counts = { pending: 0, completed: 0, failed: 0, active: 0, all: items.length };
+      for (const item of items) {
+        const key = itemFilterKey(item);
+        counts[key] = (counts[key] || 0) + 1;
+      }
+      els.itemFilter.querySelectorAll('button[data-filter]').forEach(button => {
+        const key = button.dataset.filter;
+        const label = button.textContent.replace(/\s*\(.*\)$/, '');
+        button.textContent = `${label} (${counts[key] || 0})`;
+        button.classList.toggle('active', key === state.itemFilter);
+      });
     }
 
     function renderItems(items) {
@@ -1798,6 +1830,7 @@
     async function deleteSelectedDataset() {
       if (!state.selectedId || !state.selected) return;
       if (!window.confirm(`确认删除数据集“${state.selected.name}”？`)) return;
+      setButtonLoading(els.deleteDatasetBtn, true, '正在删除...');
       setMessage(els.detailMessage, '正在删除...');
       try {
         await request(`/datasets/${state.selectedId}`, { method: 'DELETE' });
@@ -1807,6 +1840,9 @@
         setMessage(els.detailMessage, '已删除', 'success');
       } catch (error) {
         showError(els.detailMessage, error);
+      } finally {
+        setButtonLoading(els.deleteDatasetBtn, false);
+        renderSelectedDataset();
       }
     }
 
@@ -2048,6 +2084,51 @@
       document.querySelectorAll('[data-close-modal]:not(.btn-close)').forEach(button => setButtonIcon(button, 'x'));
     }
 
+    function setupColumnResize() {
+      if (!els.dataTable) return;
+      const headers = Array.from(els.dataTable.querySelectorAll('th[data-col]'));
+      headers.forEach(header => {
+        if (header.querySelector('.column-resizer')) return;
+        header.classList.add('resizable');
+        const handle = document.createElement('span');
+        handle.className = 'column-resizer';
+        handle.setAttribute('aria-hidden', 'true');
+        header.appendChild(handle);
+
+        let startX = 0;
+        let startWidth = 0;
+        let targetCol = null;
+
+        const stopResize = () => {
+          handle.classList.remove('active');
+          document.body.style.cursor = '';
+          document.body.style.userSelect = '';
+          document.removeEventListener('mousemove', moveResize);
+          document.removeEventListener('mouseup', stopResize);
+        };
+
+        const moveResize = (event) => {
+          if (!targetCol) return;
+          const minWidth = header.dataset.col === 'image' ? 82 : 96;
+          const nextWidth = Math.max(minWidth, Math.round(startWidth + event.clientX - startX));
+          targetCol.style.width = `${nextWidth}px`;
+        };
+
+        handle.addEventListener('mousedown', event => {
+          event.preventDefault();
+          event.stopPropagation();
+          startX = event.clientX;
+          startWidth = header.getBoundingClientRect().width;
+          targetCol = els.dataTable.querySelector(`col[data-col="${header.dataset.col}"]`);
+          handle.classList.add('active');
+          document.body.style.cursor = 'col-resize';
+          document.body.style.userSelect = 'none';
+          document.addEventListener('mousemove', moveResize);
+          document.addEventListener('mouseup', stopResize);
+        });
+      });
+    }
+
     function setButtonLoading(button, loading, text) {
       if (!button) return;
       if (!button.dataset.idleHtml) {
@@ -2091,6 +2172,12 @@
     els.downloadDxfBtn.addEventListener('click', () => {
       if (!state.selectedId) return;
       downloadFile(`/datasets/${state.selectedId}/download-dxf`, `${state.selected.name}_dxf.zip`).catch(error => showError(els.detailMessage, error));
+    });
+    els.itemFilter.addEventListener('click', (event) => {
+      const button = event.target.closest('button[data-filter]');
+      if (!button) return;
+      state.itemFilter = button.dataset.filter || 'pending';
+      renderSelectedDataset();
     });
     els.pickPlatePointBtn.addEventListener('click', () => setPointPickerMode('plate'));
     els.pickPaperPointBtn.addEventListener('click', () => setPointPickerMode('paper'));
@@ -2142,6 +2229,7 @@
     });
 
     decorateStaticButtons();
+    setupColumnResize();
     loadDatasets();
   </script>
 </body>

@@ -8,6 +8,7 @@
   "private": true,
   "scripts": {
     "desktop:dev": "electron .",
+    "desktop:ebuild": "electron-builder --win nsis",
     "desktop:pack": "npm run backend:build && electron-builder --win nsis",
     "backend:build": ".venv\\Scripts\\python -m PyInstaller desktop/p2r-backend.spec --noconfirm"
   },
