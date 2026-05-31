@@ -1128,11 +1128,11 @@ def run_sam2_for_plate_from_yolo_or_fallback(
 def apply_paper_fill_to_plate_mask(plate_mask: np.ndarray, paper_mask: Optional[np.ndarray]) -> Tuple[np.ndarray, Dict[str, Any]]:
     if plate_mask is None:
         raise RuntimeError("plate_mask 为空，无法补回 A4纸区域")
-    plate_bin = plate_mask > 0
+    plate_bin = _binary_mask(plate_mask) > 0
     if paper_mask is None or paper_mask.size == 0 or int((paper_mask > 0).sum()) <= 0:
         return plate_bin.astype(np.uint8) * 255, {"filled": False, "paper_area": 0, "added_area": 0, "reason": "no_paper_mask"}
 
-    paper_bin = paper_mask > 0
+    paper_bin = _binary_mask(paper_mask) > 0
     if paper_bin.shape != plate_bin.shape:
         paper_bin = cv2.resize(paper_bin.astype(np.uint8), (plate_bin.shape[1], plate_bin.shape[0]), interpolation=cv2.INTER_NEAREST) > 0
     added = paper_bin & (~plate_bin)
@@ -1195,6 +1195,11 @@ def apply_paper_fill_to_plate_mask(plate_mask: np.ndarray, paper_mask: Optional[
 def _binary_mask(mask: Optional[np.ndarray]) -> np.ndarray:
     if mask is None or mask.size == 0:
         return np.zeros((1, 1), dtype=np.uint8)
+    if mask.ndim == 3:
+        if mask.shape[2] == 1:
+            mask = mask[:, :, 0]
+        else:
+            mask = np.any(mask > 0, axis=2)
     return (mask > 0).astype(np.uint8)
 
 
@@ -1330,11 +1335,15 @@ def _fill_holes_in_binary_mask(bin_mask: np.ndarray) -> np.ndarray:
     src = (_binary_mask(bin_mask) > 0).astype(np.uint8)
     if src.size == 0 or int(src.sum()) <= 0:
         return src
-    h, w = src.shape[:2]
-    flood = src.copy()
+    # Pad with a guaranteed background border before flood filling. The plate
+    # mask may touch the image boundary, so using (0, 0) in the original mask
+    # can incorrectly classify the real exterior as a hole and fill the frame.
+    padded = np.pad(src, ((1, 1), (1, 1)), mode="constant", constant_values=0)
+    h, w = padded.shape[:2]
+    flood = padded.copy()
     flood_mask = np.zeros((h + 2, w + 2), dtype=np.uint8)
     cv2.floodFill(flood, flood_mask, (0, 0), 1)
-    holes = (flood == 0).astype(np.uint8)
+    holes = (flood[1:-1, 1:-1] == 0).astype(np.uint8)
     return ((src > 0) | (holes > 0)).astype(np.uint8)
 
 
