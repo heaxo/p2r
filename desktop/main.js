@@ -358,12 +358,12 @@ function createAppMenu() {
     {
       label: '功能',
       submenu: [
-        /*{
+        {
           label: '数据集',
           accelerator: 'Ctrl+1',
           click: () => loadUiPage('datasets.html'),
         },
-        {
+        /*{
           label: '批量识别',
           accelerator: 'Ctrl+2',
           click: () => loadUiPage(''),
