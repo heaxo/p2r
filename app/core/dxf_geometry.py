@@ -86,6 +86,77 @@ def write_optimized_dxf(
     return out
 
 
+def write_optimized_dxf_multi(
+    path: str | Path,
+    contours: List[Tuple[np.ndarray, str]],
+    offset_to_positive: bool = True,
+    config: DxfGeometryOptimizeConfig | None = None,
+) -> Dict[str, Any]:
+    cfg = config or DxfGeometryOptimizeConfig()
+    optimized: List[Tuple[Dict[str, Any], str]] = []
+    contour_infos: List[Dict[str, Any]] = []
+    source_points: List[np.ndarray] = []
+
+    for index, (contour, layer) in enumerate(contours):
+        pts = _remove_closing_duplicate(_as_points(contour))
+        source_points.append(pts)
+        entities, info = optimize_contour_entities(pts, cfg)
+        contour_infos.append({
+            "index": int(index),
+            "layer": str(layer),
+            "input_points": int(len(pts)),
+            "entity_count": int(len(entities)),
+            "entity_type_counts": dict(info.get("entity_type_counts") or {}),
+            "mode": info.get("mode"),
+        })
+        optimized.extend((entity, str(layer)) for entity in entities)
+
+    all_entities = [entity for entity, _ in optimized]
+    all_points = np.vstack(source_points) if source_points else np.zeros((0, 2), dtype=np.float64)
+    dx, dy = _compute_positive_offset(all_points, all_entities, offset_to_positive)
+
+    lines = [
+        "0", "SECTION",
+        "2", "HEADER",
+        "9", "$INSUNITS",
+        "70", "4",
+        "0", "ENDSEC",
+        "0", "SECTION",
+        "2", "ENTITIES",
+    ]
+
+    for entity, layer in optimized:
+        lines.extend(_entity_to_dxf_lines(entity, dx, dy, layer))
+
+    lines.extend(["0", "ENDSEC", "0", "EOF"])
+
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text("\n".join(lines), encoding="utf-8")
+
+    type_counts: Dict[str, int] = {}
+    max_error = 0.0
+    for entity, _ in optimized:
+        entity_type = str(entity.get("type") or "UNKNOWN")
+        type_counts[entity_type] = type_counts.get(entity_type, 0) + 1
+        max_error = max(max_error, float(entity.get("max_error_mm", 0.0)))
+
+    return {
+        "enabled": bool(cfg.enabled),
+        "mode": "multi_contour",
+        "config": asdict(cfg),
+        "contour_count": int(len(contours)),
+        "inner_contour_count": max(0, int(len(contours)) - 1),
+        "entity_count": int(len(optimized)),
+        "entity_type_counts": type_counts,
+        "max_fit_error_mm": round(float(max_error), 6),
+        "offset_x_mm": round(float(dx), 6),
+        "offset_y_mm": round(float(dy), 6),
+        "path": str(output_path),
+        "contours": contour_infos,
+    }
+
+
 def optimize_contour_entities(
     contour_mm: np.ndarray,
     config: DxfGeometryOptimizeConfig | None = None,

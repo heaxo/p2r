@@ -628,6 +628,8 @@
       width: 13px;
       height: 13px;
       display: inline-block;
+      margin-right: 6px;
+      vertical-align: -2px;
       border: 2px solid currentColor;
       border-right-color: transparent;
       border-radius: 50%;
@@ -1033,6 +1035,7 @@
       selectedId: null,
       selected: null,
       editingItem: null,
+      loadingDatasetId: null,
       pollTimer: null,
       pollInFlight: false,
       itemPreviewUrl: null,
@@ -1269,12 +1272,14 @@
     function renderDatasetList() {
       els.datasetList.innerHTML = '';
       for (const dataset of state.datasets) {
+        const loading = state.loadingDatasetId === dataset.id;
         const button = document.createElement('button');
         button.type = 'button';
         button.className = `dataset-row ${dataset.id === state.selectedId ? 'active' : ''}`;
+        button.disabled = loading;
         button.innerHTML = `
           <div class="d-flex align-items-center justify-content-between gap-2">
-            <div class="dataset-name">${escapeHtml(dataset.name)}</div>
+            <div class="dataset-name">${loading ? '<span class="btn-loading-spinner" aria-hidden="true"></span>' : ''}${escapeHtml(dataset.name)}</div>
             ${statusBadge(dataset.status)}
           </div>
           <div class="small-muted">${dataset.item_count || 0} 条 · 完成 ${dataset.completed_count || 0} · ${formatDate(dataset.created_at)}</div>
@@ -1286,6 +1291,7 @@
 
     async function selectDataset(datasetId) {
       state.selectedId = datasetId;
+      state.loadingDatasetId = datasetId;
       renderDatasetList();
       setMessage(els.detailMessage, '正在加载数据集...');
       try {
@@ -1296,6 +1302,9 @@
         startOrStopPolling();
       } catch (error) {
         showError(els.detailMessage, error);
+      } finally {
+        state.loadingDatasetId = null;
+        renderDatasetList();
       }
     }
 
@@ -1767,6 +1776,7 @@
 
     async function saveItem(event) {
       event.preventDefault();
+      setButtonLoading(els.saveItemBtn, true, '保存中...');
       setMessage(els.itemFormMessage, '正在保存...');
       try {
         const isEdit = !!state.editingItem;
@@ -1782,11 +1792,15 @@
         await loadDatasets(state.selectedId);
       } catch (error) {
         showError(els.itemFormMessage, error);
+      } finally {
+        setButtonLoading(els.saveItemBtn, false);
       }
     }
 
     async function createDataset(event) {
       event.preventDefault();
+      const submitButton = event.submitter || event.currentTarget.querySelector('button[type="submit"]');
+      setButtonLoading(submitButton, true, '创建中...');
       els.datasetName.classList.remove('is-invalid');
       els.datasetNameError.textContent = '';
       const form = new FormData();
@@ -1799,6 +1813,8 @@
       } catch (error) {
         els.datasetName.classList.add('is-invalid');
         els.datasetNameError.textContent = String(error.detail || error || '创建失败');
+      } finally {
+        setButtonLoading(submitButton, false);
       }
     }
 
@@ -1825,6 +1841,7 @@
 
     async function copySelectedDataset() {
       if (!state.selectedId) return;
+      setButtonLoading(els.copyDatasetBtn, true, '复制中...');
       setMessage(els.detailMessage, '正在复制...');
       try {
         const payload = await request(`/datasets/${state.selectedId}/copy`, { method: 'POST', body: new FormData() });
@@ -1832,6 +1849,9 @@
         setMessage(els.detailMessage, '已复制', 'success');
       } catch (error) {
         showError(els.detailMessage, error);
+      } finally {
+        setButtonLoading(els.copyDatasetBtn, false);
+        renderSelectedDataset();
       }
     }
 
@@ -1878,6 +1898,7 @@
     async function clearSelectedDatasetRecognition() {
       if (!state.selectedId || !state.selected) return;
       if (!window.confirm(`确认清除数据集“${state.selected.name}”中所有已识别数据的识别状态？`)) return;
+      setButtonLoading(els.clearDatasetRecognitionBtn, true, '清除中...');
       setMessage(els.detailMessage, '正在清除识别状态...');
       try {
         const payload = await request(`/datasets/${state.selectedId}/clear-recognition`, { method: 'POST' });
@@ -1887,6 +1908,9 @@
         setMessage(els.detailMessage, '已清除识别状态', 'success');
       } catch (error) {
         showError(els.detailMessage, error);
+      } finally {
+        setButtonLoading(els.clearDatasetRecognitionBtn, false);
+        renderSelectedDataset();
       }
     }
 
@@ -1900,6 +1924,8 @@
     async function saveImportSettings(event) {
       event.preventDefault();
       if (!state.selectedId) return;
+      const submitButton = event.submitter || event.currentTarget.querySelector('button[type="submit"]');
+      setButtonLoading(submitButton, true, '保存中...');
       const form = new FormData();
       form.append('expert_importer', els.expertImporter.value || 'Procesos');
       setMessage(els.importSettingsMessage, '正在保存...');
@@ -1912,12 +1938,15 @@
         setMessage(els.detailMessage, '导入设置已保存', 'success');
       } catch (error) {
         showError(els.importSettingsMessage, error);
+      } finally {
+        setButtonLoading(submitButton, false);
       }
     }
 
     async function importSelectedDatasetToExpert() {
       if (!state.selectedId || !state.selected || state.importInProgress) return;
       state.importInProgress = true;
+      setButtonLoading(els.importExpertBtn, true, '导入中...');
       renderSelectedDataset();
       setMessage(els.detailMessage, '');
       startExpertFakeProgress((state.selected.items || []).length);
@@ -1929,6 +1958,7 @@
         showError(els.detailMessage, error);
       } finally {
         state.importInProgress = false;
+        setButtonLoading(els.importExpertBtn, false);
         renderSelectedDataset();
       }
     }
@@ -1971,9 +2001,10 @@
       els.expertImportProgressText.textContent = text || '';
     }
 
-    async function deleteItem(itemId) {
+    async function deleteItem(itemId, button = null) {
       if (!state.selectedId) return;
       if (!window.confirm('确认删除这条数据？')) return;
+      setButtonLoading(button, true, '删除中...');
       try {
         const payload = await request(`/datasets/${state.selectedId}/items/${itemId}`, { method: 'DELETE' });
         state.selected = payload.dataset;
@@ -1981,12 +2012,14 @@
         await loadDatasets(state.selectedId);
       } catch (error) {
         showError(els.detailMessage, error);
+        setButtonLoading(button, false);
       }
     }
 
-    async function clearItemRecognition(itemId) {
+    async function clearItemRecognition(itemId, button = null) {
       if (!state.selectedId) return;
       if (!window.confirm('确认清除这条数据的识别状态？')) return;
+      setButtonLoading(button, true, '清除中...');
       try {
         const payload = await request(`/datasets/${state.selectedId}/items/${itemId}/clear-recognition`, { method: 'POST' });
         state.selected = payload.dataset;
@@ -1995,6 +2028,7 @@
         setMessage(els.detailMessage, '已清除识别状态', 'success');
       } catch (error) {
         showError(els.detailMessage, error);
+        setButtonLoading(button, false);
       }
     }
 
@@ -2166,7 +2200,14 @@
         .replace(/'/g, '&#39;');
     }
 
-    els.refreshBtn.addEventListener('click', () => loadDatasets());
+    els.refreshBtn.addEventListener('click', async () => {
+      setButtonLoading(els.refreshBtn, true, '刷新中...');
+      try {
+        await loadDatasets();
+      } finally {
+        setButtonLoading(els.refreshBtn, false);
+      }
+    });
     els.openCreateDatasetBtn.addEventListener('click', () => {
       els.datasetName.value = '';
       els.datasetName.classList.remove('is-invalid');
@@ -2177,7 +2218,16 @@
     els.uploadExcelBtn.addEventListener('click', () => els.excelFile.click());
     els.excelFile.addEventListener('change', () => importExcelFile(els.excelFile.files[0]));
     els.createDatasetForm.addEventListener('submit', createDataset);
-    els.downloadTemplateBtn.addEventListener('click', () => downloadFile('/datasets/excel-template', 'dataset_template.xlsx').catch(error => showError(els.listMessage, error)));
+    els.downloadTemplateBtn.addEventListener('click', async () => {
+      setButtonLoading(els.downloadTemplateBtn, true, '下载中...');
+      try {
+        await downloadFile('/datasets/excel-template', 'dataset_template.xlsx');
+      } catch (error) {
+        showError(els.listMessage, error);
+      } finally {
+        setButtonLoading(els.downloadTemplateBtn, false);
+      }
+    });
     els.openItemBtn.addEventListener('click', () => openItemModal(null));
     els.importSettingsBtn.addEventListener('click', openImportSettingsModal);
     els.importSettingsForm.addEventListener('submit', saveImportSettings);
@@ -2186,9 +2236,17 @@
     els.deleteDatasetBtn.addEventListener('click', deleteSelectedDataset);
     els.recognizeDatasetBtn.addEventListener('click', recognizeSelectedDataset);
     els.clearDatasetRecognitionBtn.addEventListener('click', clearSelectedDatasetRecognition);
-    els.downloadDxfBtn.addEventListener('click', () => {
+    els.downloadDxfBtn.addEventListener('click', async () => {
       if (!state.selectedId) return;
-      downloadFile(`/datasets/${state.selectedId}/download-dxf`, `${state.selected.name}_dxf.zip`).catch(error => showError(els.detailMessage, error));
+      setButtonLoading(els.downloadDxfBtn, true, '下载中...');
+      try {
+        await downloadFile(`/datasets/${state.selectedId}/download-dxf`, `${state.selected.name}_dxf.zip`);
+      } catch (error) {
+        showError(els.detailMessage, error);
+      } finally {
+        setButtonLoading(els.downloadDxfBtn, false);
+        renderSelectedDataset();
+      }
     });
     els.itemFilter.addEventListener('click', (event) => {
       const button = event.target.closest('button[data-filter]');
@@ -2224,10 +2282,10 @@
         openItemModal(item);
       }
       if (button.dataset.action === 'delete') {
-        deleteItem(button.dataset.id);
+        deleteItem(button.dataset.id, button);
       }
       if (button.dataset.action === 'clear-recognition') {
-        clearItemRecognition(button.dataset.id);
+        clearItemRecognition(button.dataset.id, button);
       }
     });
     document.addEventListener('click', (event) => {

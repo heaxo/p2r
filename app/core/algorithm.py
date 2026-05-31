@@ -103,6 +103,8 @@ MAX_SAM_MASK_AREA_RATIO_BY_CLASS = {
 PAPER_FILL_DILATE_KERNEL = 9
 PAPER_FILL_CLOSE_KERNEL = 15
 PAPER_FILL_USE_BOX_IF_NO_MASK = True
+PLATE_INNER_CONTOUR_MIN_AREA_PX = 500.0
+PLATE_INNER_CONTOUR_MIN_AREA_RATIO = 0.0005
 
 
 # =========================
@@ -1255,7 +1257,6 @@ def _finalize_plate_fill_mask(bin_mask: np.ndarray) -> np.ndarray:
     if close_k > 0:
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (close_k, close_k))
         out = cv2.morphologyEx(out, cv2.MORPH_CLOSE, kernel)
-    out = _fill_holes_in_binary_mask(out)
     return (out > 0).astype(np.uint8)
 
 
@@ -1351,6 +1352,44 @@ def _largest_contour_from_mask(mask: np.ndarray) -> Optional[np.ndarray]:
     if not contours:
         return None
     return max(contours, key=cv2.contourArea)
+
+
+def _plate_contours_from_mask(mask: np.ndarray) -> Tuple[Optional[np.ndarray], List[np.ndarray], Dict[str, Any]]:
+    bin_mask = _binary_mask(mask)
+    contours, hierarchy = cv2.findContours(bin_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
+    if not contours or hierarchy is None:
+        return None, [], {"inner_contour_count": 0, "reason": "no_contours"}
+
+    hierarchy_rows = hierarchy.reshape(-1, 4)
+    areas = [float(abs(cv2.contourArea(contour))) for contour in contours]
+    external_indices = [idx for idx, row in enumerate(hierarchy_rows) if int(row[3]) < 0]
+    if not external_indices:
+        return None, [], {"inner_contour_count": 0, "reason": "no_external_contours"}
+
+    outer_index = max(external_indices, key=lambda idx: areas[idx])
+    outer = contours[outer_index]
+    outer_area = max(1.0, areas[outer_index])
+    min_inner_area = max(float(PLATE_INNER_CONTOUR_MIN_AREA_PX), outer_area * float(PLATE_INNER_CONTOUR_MIN_AREA_RATIO))
+
+    inner_contours: List[np.ndarray] = []
+    skipped_small = 0
+    for idx, row in enumerate(hierarchy_rows):
+        if int(row[3]) != outer_index:
+            continue
+        area = areas[idx]
+        if area < min_inner_area:
+            skipped_small += 1
+            continue
+        inner_contours.append(contours[idx])
+
+    inner_contours.sort(key=lambda contour: float(abs(cv2.contourArea(contour))), reverse=True)
+    return outer, inner_contours, {
+        "outer_area_px": round(float(outer_area), 3),
+        "inner_contour_count": int(len(inner_contours)),
+        "inner_contour_areas_px": [round(float(abs(cv2.contourArea(contour))), 3) for contour in inner_contours],
+        "min_inner_area_px": round(float(min_inner_area), 3),
+        "skipped_small_inner_contours": int(skipped_small),
+    }
 
 
 def _odd_kernel_size(value: int, min_value: int = 0) -> int:
@@ -2095,6 +2134,8 @@ def scale_contour_to_target_xy(
         "target_y_mm": round(float(target_y), 3) if target_y is not None else None,
         "source_x_mm": round(current_x, 3),
         "source_y_mm": round(current_y, 3),
+        "source_min_x_mm": round(float(min_xy[0]), 9),
+        "source_min_y_mm": round(float(min_xy[1]), 9),
         "scale_x": 1.0,
         "scale_y": 1.0,
     }
@@ -2123,6 +2164,24 @@ def scale_contour_to_target_xy(
     return scaled.astype(np.float32), info
 
 
+def apply_dxf_target_scale_to_contours(contours_mm: Sequence[np.ndarray], target_info: Dict[str, Any]) -> List[np.ndarray]:
+    if not target_info or not target_info.get("enabled"):
+        return [np.asarray(contour, dtype=np.float32).reshape(-1, 2).copy() for contour in contours_mm]
+
+    min_x = float(target_info.get("source_min_x_mm") or 0.0)
+    min_y = float(target_info.get("source_min_y_mm") or 0.0)
+    scale_x = float(target_info.get("scale_x") or 1.0)
+    scale_y = float(target_info.get("scale_y") or 1.0)
+
+    scaled_contours: List[np.ndarray] = []
+    for contour in contours_mm:
+        pts = np.asarray(contour, dtype=np.float64).reshape(-1, 2).copy()
+        pts[:, 0] = min_x + (pts[:, 0] - min_x) * scale_x
+        pts[:, 1] = min_y + (pts[:, 1] - min_y) * scale_y
+        scaled_contours.append(pts.astype(np.float32))
+    return scaled_contours
+
+
 def write_simple_dxf(path: Path, plate_contour_mm: np.ndarray, offset_to_positive: bool = True) -> Dict[str, Any]:
     """
     写 DXF，单位 mm。
@@ -2135,6 +2194,21 @@ def write_simple_dxf(path: Path, plate_contour_mm: np.ndarray, offset_to_positiv
         plate_contour_mm=plate_contour_mm,
         offset_to_positive=offset_to_positive,
         layer="PLATE_OUTER",
+    )
+
+
+def write_plate_dxf_with_inner_contours(
+    path: Path,
+    outer_contour_mm: np.ndarray,
+    inner_contours_mm: Sequence[np.ndarray],
+    offset_to_positive: bool = True,
+) -> Dict[str, Any]:
+    contours: List[Tuple[np.ndarray, str]] = [(outer_contour_mm, "PLATE_OUTER")]
+    contours.extend((contour, "PLATE_INNER") for contour in inner_contours_mm)
+    return write_optimized_dxf_multi(
+        path=path,
+        contours=contours,
+        offset_to_positive=offset_to_positive,
     )
 
 
@@ -2346,7 +2420,7 @@ from app.core.dxf_postprocess import (
     postprocess_plate_contour_mm,
     save_postprocess_preview,
 )
-from app.core.dxf_geometry import write_optimized_dxf
+from app.core.dxf_geometry import write_optimized_dxf, write_optimized_dxf_multi
 
 def fit_circle_mm(points_mm: np.ndarray) -> dict:
     pts = np.asarray(points_mm, dtype=np.float32).reshape(-1, 2)
@@ -3067,13 +3141,14 @@ def process_one_image(args) -> Dict[str, Any]:
                 paper_quad_info["paper_quad_px_tl_tr_br_bl"],
             )
 
-    # 5. 钢板外轮廓 -> mm 坐标
-    plate_outer_contour = _largest_contour_from_mask(final_plate_mask)
+    # 5. 钢板外轮廓/内轮廓 -> mm 坐标
+    plate_outer_contour, plate_inner_contours, plate_contour_tree_info = _plate_contours_from_mask(final_plate_mask)
     if plate_outer_contour is None or len(plate_outer_contour) < 4:
         logger.error("Plate outer contour extraction failed")
         raise RuntimeError("未能从最终 plate mask 中提取钢板外轮廓")
 
     plate_contour_px = plate_outer_contour.reshape(-1, 2).astype(np.float32)
+    plate_inner_contours_px = [contour.reshape(-1, 2).astype(np.float32) for contour in plate_inner_contours if len(contour) >= 4]
     pixel_circle_info = fit_circle_px(plate_contour_px)
 
     perspective_source = str(getattr(args, "perspective_source", "a4") or "a4").strip().lower()
@@ -3146,6 +3221,10 @@ def process_one_image(args) -> Dict[str, Any]:
         logger.info("{}-based perspective homography selected", "ChArUco" if charuco_reference.ok else "A4")
 
     plate_contour_mm_raw = transform_points_px_to_mm(plate_contour_px, H)
+    plate_inner_contours_mm_raw = [
+        transform_points_px_to_mm(contour_px, H)
+        for contour_px in plate_inner_contours_px
+    ]
     dxf_target_x_mm = getattr(args, "dxf_target_x_mm", None)
     dxf_target_y_mm = getattr(args, "dxf_target_y_mm", None)
     dxf_target_size_1_mm = getattr(args, "dxf_target_size_1_mm", None)
@@ -3221,6 +3300,7 @@ def process_one_image(args) -> Dict[str, Any]:
             dxf_target_size_1_mm,
             dxf_target_size_2_mm,
         )
+        plate_inner_contours_mm = apply_dxf_target_scale_to_contours(plate_inner_contours_mm_raw, dxf_target_size_info)
 
         if dxf_target_size_info.get("enabled"):
             dims = calc_dimensions(plate_contour_mm)
@@ -3228,15 +3308,37 @@ def process_one_image(args) -> Dict[str, Any]:
         else:
             dims = dict(detected_plate_dimensions)
         dims["dxf_target_size"] = dxf_target_size_info
+        if plate_inner_contours_mm:
+            inner_area_mm2 = sum(float(abs(cv2.contourArea(contour.reshape(-1, 1, 2).astype(np.float32)))) for contour in plate_inner_contours_mm)
+            inner_perimeter_mm = sum(float(cv2.arcLength(contour.reshape(-1, 1, 2).astype(np.float32), True)) for contour in plate_inner_contours_mm)
+            outer_area_mm2 = float(dims.get("area_mm2") or 0.0)
+            net_area_mm2 = max(0.0, outer_area_mm2 - inner_area_mm2)
+            dims["inner_contour_count"] = int(len(plate_inner_contours_mm))
+            dims["outer_area_mm2"] = round(outer_area_mm2, 2)
+            dims["inner_area_mm2"] = round(inner_area_mm2, 2)
+            dims["net_area_mm2"] = round(net_area_mm2, 2)
+            dims["net_area_m2"] = round(dims["net_area_mm2"] / 1_000_000.0, 6)
+            dims["area_mm2"] = dims["net_area_mm2"]
+            dims["area_m2"] = dims["net_area_m2"]
+            dims["inner_perimeter_mm"] = round(inner_perimeter_mm, 2)
+            dims["cut_perimeter_mm"] = round(float(dims.get("perimeter_mm") or 0.0) + inner_perimeter_mm, 2)
 
         # 圆/椭圆类钢板必须直接写 CIRCLE/ELLIPSE 实体，不能进入普通折线/圆弧后处理。
         # 透视或目标尺寸非等比缩放可能把圆形轮廓变成椭圆，但不应把它简化成多边形。
-        dxf_geometry_info = write_circle_or_ellipse_dxf_from_bbox(
-            dxf_path,
-            plate_contour_mm,
-            circle_info=circle_info,
-            offset_to_positive=True,
-        )
+        if plate_inner_contours_mm:
+            dxf_geometry_info = write_plate_dxf_with_inner_contours(
+                dxf_path,
+                plate_contour_mm,
+                plate_inner_contours_mm,
+                offset_to_positive=True,
+            )
+        else:
+            dxf_geometry_info = write_circle_or_ellipse_dxf_from_bbox(
+                dxf_path,
+                plate_contour_mm,
+                circle_info=circle_info,
+                offset_to_positive=True,
+            )
 
         dxf_postprocess_info = {
             "enabled": False,
@@ -3246,6 +3348,7 @@ def process_one_image(args) -> Dict[str, Any]:
                 else "circle_like_contour_use_dxf_circle"
             ),
             "circle_info": json_safe(circle_info),
+            "inner_contours": json_safe(plate_contour_tree_info),
         }
 
     else:
@@ -3302,11 +3405,26 @@ def process_one_image(args) -> Dict[str, Any]:
             dxf_target_size_1_mm,
             dxf_target_size_2_mm,
         )
+        plate_inner_contours_mm = apply_dxf_target_scale_to_contours(plate_inner_contours_mm_raw, dxf_target_size_info)
         dims = calc_dimensions(plate_contour_mm)
         dims["dxf_target_size"] = dxf_target_size_info
+        if plate_inner_contours_mm:
+            inner_area_mm2 = sum(float(abs(cv2.contourArea(contour.reshape(-1, 1, 2).astype(np.float32)))) for contour in plate_inner_contours_mm)
+            inner_perimeter_mm = sum(float(cv2.arcLength(contour.reshape(-1, 1, 2).astype(np.float32), True)) for contour in plate_inner_contours_mm)
+            outer_area_mm2 = float(dims.get("area_mm2") or 0.0)
+            net_area_mm2 = max(0.0, outer_area_mm2 - inner_area_mm2)
+            dims["inner_contour_count"] = int(len(plate_inner_contours_mm))
+            dims["outer_area_mm2"] = round(outer_area_mm2, 2)
+            dims["inner_area_mm2"] = round(inner_area_mm2, 2)
+            dims["net_area_mm2"] = round(net_area_mm2, 2)
+            dims["net_area_m2"] = round(dims["net_area_mm2"] / 1_000_000.0, 6)
+            dims["area_mm2"] = dims["net_area_mm2"]
+            dims["area_m2"] = dims["net_area_m2"]
+            dims["inner_perimeter_mm"] = round(inner_perimeter_mm, 2)
+            dims["cut_perimeter_mm"] = round(float(dims.get("perimeter_mm") or 0.0) + inner_perimeter_mm, 2)
 
         final_ellipse_info = fit_ellipse_like_mm(plate_contour_mm, pixel_circle_info)
-        if final_ellipse_info.get("is_ellipse_like"):
+        if final_ellipse_info.get("is_ellipse_like") and not plate_inner_contours_mm:
             dxf_geometry_info = write_circle_or_ellipse_dxf_from_fit(
                 dxf_path,
                 final_ellipse_info,
@@ -3319,13 +3437,22 @@ def process_one_image(args) -> Dict[str, Any]:
             dims["ellipse_minor_diameter_mm"] = round(float(final_ellipse_info["minor_diameter"]), 2)
             dims["ellipse_angle_deg"] = round(float(final_ellipse_info["major_angle_deg"]), 2)
         else:
-            dxf_geometry_info = write_simple_dxf(
-                dxf_path,
-                plate_contour_mm,
-                offset_to_positive=True,
-            )
+            if plate_inner_contours_mm:
+                dxf_geometry_info = write_plate_dxf_with_inner_contours(
+                    dxf_path,
+                    plate_contour_mm,
+                    plate_inner_contours_mm,
+                    offset_to_positive=True,
+                )
+            else:
+                dxf_geometry_info = write_simple_dxf(
+                    dxf_path,
+                    plate_contour_mm,
+                    offset_to_positive=True,
+                )
             dxf_postprocess_info["ellipse_override"] = json_safe(final_ellipse_info)
             dxf_postprocess_info["final_dxf_reason"] = "postprocessed_contour_written_as_polyline_entities"
+            dxf_postprocess_info["inner_contours"] = json_safe(plate_contour_tree_info)
         logger.info(
             "DXF written: {}, entities={}",
             dxf_path,
@@ -3438,7 +3565,7 @@ def process_one_image(args) -> Dict[str, Any]:
         },
         "note": (
             "尺寸基于单张 A4 的平面 Homography 换算。"
-            "DXF只包含钢板外轮廓，不包含A4纸轮廓。"
+            "DXF包含钢板外轮廓和可靠内轮廓，不包含A4纸轮廓。"
             "DXF轮廓已做后处理：去毛刺、压直线、局部凹陷修复。"
             "A4 与钢板不共面、钢板弯曲、A4角点不准、相机广角畸变都会引入误差。"
             "若尺寸偏差明显，优先传 --paper-points 使用准确A4四角，或指定 --a4-orientation landscape/portrait。"
