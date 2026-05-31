@@ -86,6 +86,15 @@ FALLBACK_AVOID_DILATE_KERNEL = 35
 FALLBACK_POINT_SEARCH_STEP_PX = 40
 FALLBACK_POINT_SEARCH_MAX_RADIUS_RATIO = 0.45
 FALLBACK_POINT_SEARCH_ANGLE_COUNT = 32
+FALLBACK_GLOBAL_GRID_RATIOS = (0.15, 0.30, 0.50, 0.70, 0.85)
+FALLBACK_MAX_CANDIDATE_POINTS = 12
+FALLBACK_FOREGROUND_MIN_AREA_RATIO = 0.001
+FALLBACK_FOREGROUND_MAX_AREA_RATIO = 0.85
+FALLBACK_BG_DISTANCE_MIN_THRESHOLD = 18.0
+FALLBACK_DISABLE_MULTI_POINT_PROMPT = True
+FALLBACK_DARK_POINT_BRIGHTNESS = 0.16
+FALLBACK_DARK_POINT_PENALTY = 4.0
+FALLBACK_BORDER_POINT_PENALTY = 2.5
 
 # mask 合理面积范围
 MIN_SAM_MASK_AREA_RATIO_BY_CLASS = {
@@ -650,19 +659,237 @@ def find_nearest_point_outside_avoid_mask(image_rgb: np.ndarray, base_x: int, ba
     return {"x": base_x, "y": base_y, "point_score": float(score), "point_detail": detail, "stage": "center_fallback_force_use_center"}
 
 
+def fallback_point_penalty(
+    image_shape: Sequence[int],
+    x: int,
+    y: int,
+    point_detail: Optional[Dict[str, Any]] = None,
+) -> Tuple[float, Dict[str, float]]:
+    h, w = image_shape[:2]
+    detail = point_detail or {}
+    brightness = float(detail.get("brightness", 0.5))
+    dark_penalty = 0.0
+    if brightness < float(FALLBACK_DARK_POINT_BRIGHTNESS):
+        dark_penalty = (
+            (float(FALLBACK_DARK_POINT_BRIGHTNESS) - brightness)
+            / max(1e-6, float(FALLBACK_DARK_POINT_BRIGHTNESS))
+            * float(FALLBACK_DARK_POINT_PENALTY)
+        )
+
+    border_margin = max(8, int(round(min(h, w) * 0.04)))
+    near_border = min(int(x), int(y), max(0, w - 1 - int(x)), max(0, h - 1 - int(y))) < border_margin
+    border_penalty = float(FALLBACK_BORDER_POINT_PENALTY) if near_border else 0.0
+
+    total = float(dark_penalty + border_penalty)
+    return total, {
+        "dark_penalty": float(dark_penalty),
+        "border_penalty": float(border_penalty),
+        "total_penalty": total,
+    }
+
+
+def build_fallback_foreground_mask(image_rgb: np.ndarray, avoid_mask: Optional[np.ndarray] = None) -> Tuple[np.ndarray, Dict[str, Any]]:
+    h, w = image_rgb.shape[:2]
+    if h <= 0 or w <= 0:
+        return np.zeros((0, 0), dtype=np.uint8), {"foreground_source": "empty_image"}
+
+    lab = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2LAB).astype(np.float32)
+    border = max(8, int(round(min(h, w) * 0.04)))
+    border = min(border, max(1, h // 2), max(1, w // 2))
+    border_pixels = np.concatenate([
+        lab[:border, :, :].reshape(-1, 3),
+        lab[h - border:, :, :].reshape(-1, 3),
+        lab[:, :border, :].reshape(-1, 3),
+        lab[:, w - border:, :].reshape(-1, 3),
+    ], axis=0)
+    bg_lab = np.median(border_pixels, axis=0)
+    bg_distance = np.linalg.norm(lab - bg_lab.reshape(1, 1, 3), axis=2)
+    distance_u8 = np.clip(bg_distance, 0, 255).astype(np.uint8)
+    otsu_threshold, _ = cv2.threshold(distance_u8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    threshold = max(float(FALLBACK_BG_DISTANCE_MIN_THRESHOLD), min(80.0, float(otsu_threshold)))
+    mask = (bg_distance >= threshold).astype(np.uint8)
+
+    k = max(5, int(round(min(h, w) / 120.0)))
+    if k % 2 == 0:
+        k += 1
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+
+    if avoid_mask is not None and avoid_mask.size > 0:
+        if avoid_mask.shape != (h, w):
+            avoid_mask = cv2.resize(avoid_mask, (w, h), interpolation=cv2.INTER_NEAREST)
+        mask[avoid_mask > 0] = 0
+
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask.astype(np.uint8), connectivity=8)
+    filtered = np.zeros((h, w), dtype=np.uint8)
+    image_area = max(1, h * w)
+    kept_components = []
+    for label in range(1, num_labels):
+        area = int(stats[label, cv2.CC_STAT_AREA])
+        area_ratio = area / image_area
+        if area_ratio < float(FALLBACK_FOREGROUND_MIN_AREA_RATIO):
+            continue
+        if area_ratio > float(FALLBACK_FOREGROUND_MAX_AREA_RATIO):
+            continue
+        filtered[labels == label] = 1
+        kept_components.append({
+            "label": int(label),
+            "area": area,
+            "area_ratio": float(area_ratio),
+            "bbox": [
+                int(stats[label, cv2.CC_STAT_LEFT]),
+                int(stats[label, cv2.CC_STAT_TOP]),
+                int(stats[label, cv2.CC_STAT_WIDTH]),
+                int(stats[label, cv2.CC_STAT_HEIGHT]),
+            ],
+        })
+
+    return filtered, {
+        "foreground_source": "border_lab_distance",
+        "background_lab": [round(float(v), 3) for v in bg_lab.tolist()],
+        "threshold": round(float(threshold), 3),
+        "otsu_threshold": round(float(otsu_threshold), 3),
+        "component_count": int(len(kept_components)),
+        "components": kept_components[:8],
+        "bg_distance": bg_distance,
+    }
+
+
+def make_global_plate_fallback_candidates(
+    image_rgb: np.ndarray,
+    avoid_mask: Optional[np.ndarray] = None,
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    h, w = image_rgb.shape[:2]
+    foreground_mask, foreground_info = build_fallback_foreground_mask(image_rgb, avoid_mask=avoid_mask)
+    bg_distance = foreground_info.pop("bg_distance", None)
+    candidates: List[Dict[str, Any]] = []
+
+    if foreground_mask.size > 0 and int(foreground_mask.sum()) > 0:
+        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(foreground_mask.astype(np.uint8), connectivity=8)
+        components = []
+        for label in range(1, num_labels):
+            area = int(stats[label, cv2.CC_STAT_AREA])
+            if area <= 0:
+                continue
+            components.append((area, label))
+        components.sort(reverse=True)
+        for area, label in components[:6]:
+            component_mask = (labels == label).astype(np.uint8)
+            dist = cv2.distanceTransform(component_mask * 255, cv2.DIST_L2, 5)
+            for _ in range(3):
+                _, max_dist, _, max_loc = cv2.minMaxLoc(dist)
+                if max_dist <= 0:
+                    break
+                x, y = int(max_loc[0]), int(max_loc[1])
+                cv2.circle(dist, (x, y), max(20, int(round(min(h, w) * 0.05))), 0, -1)
+                if is_point_on_avoid_mask(x, y, image_rgb.shape, avoid_mask):
+                    continue
+                clean_score, detail = score_point_cleanliness(image_rgb, x, y)
+                bg_score = 0.0
+                if bg_distance is not None:
+                    bg_score = min(float(bg_distance[y, x]) / 60.0, 0.8)
+                area_score = min(math.log1p(area / max(1.0, h * w) * 100.0), 1.5)
+                text_penalty = max(0.0, float(detail.get("edge_density", 0.0)) - 0.035) * 12.0
+                text_penalty += max(0.0, float(detail.get("variance", 0.0)) - 0.012) * 8.0
+                point_penalty, penalty_detail = fallback_point_penalty(image_rgb.shape, x, y, detail)
+                candidates.append({
+                    "x": x,
+                    "y": y,
+                    "point_score": float(clean_score + min(max_dist / 80.0, 1.0) + bg_score + area_score - text_penalty - point_penalty),
+                    "point_detail": detail,
+                    "stage": "global_foreground_distance_transform",
+                    "inner_dist": float(max_dist),
+                    "foreground_area": int(area),
+                    "text_penalty": float(text_penalty),
+                    "fallback_penalty": penalty_detail,
+                    "disable_multi_point": bool(FALLBACK_DISABLE_MULTI_POINT_PROMPT),
+                })
+
+    for ry in FALLBACK_GLOBAL_GRID_RATIOS:
+        for rx in FALLBACK_GLOBAL_GRID_RATIOS:
+            x = int(round(float(rx) * (w - 1)))
+            y = int(round(float(ry) * (h - 1)))
+            if is_point_on_avoid_mask(x, y, image_rgb.shape, avoid_mask):
+                continue
+            clean_score, detail = score_point_cleanliness(image_rgb, x, y)
+            fg_bonus = 0.0
+            if foreground_mask.size > 0 and foreground_mask[y, x] > 0:
+                fg_bonus += 0.8
+            if bg_distance is not None:
+                fg_bonus += min(float(bg_distance[y, x]) / 80.0, 0.6)
+            point_penalty, penalty_detail = fallback_point_penalty(image_rgb.shape, x, y, detail)
+            candidates.append({
+                "x": x,
+                "y": y,
+                "point_score": float(clean_score + fg_bonus - point_penalty),
+                "point_detail": detail,
+                "stage": "global_grid_candidate",
+                "ratio_x": float(rx),
+                "ratio_y": float(ry),
+                "fallback_penalty": penalty_detail,
+                "disable_multi_point": bool(FALLBACK_DISABLE_MULTI_POINT_PROMPT),
+            })
+
+    base_xy = ratio_to_xy(PLATE_FALLBACK_POINT_RATIO, image_rgb.shape) or (w // 2, h // 2)
+    base_x, base_y = int(base_xy[0]), int(base_xy[1])
+    if not is_point_on_avoid_mask(base_x, base_y, image_rgb.shape, avoid_mask):
+        clean_score, detail = score_point_cleanliness(image_rgb, base_x, base_y)
+        point_penalty, penalty_detail = fallback_point_penalty(image_rgb.shape, base_x, base_y, detail)
+        candidates.append({
+            "x": base_x,
+            "y": base_y,
+            "point_score": float(clean_score + 1.2 - point_penalty),
+            "point_detail": detail,
+            "stage": "legacy_center_candidate",
+            "fallback_penalty": penalty_detail,
+            "disable_multi_point": bool(FALLBACK_DISABLE_MULTI_POINT_PROMPT),
+        })
+
+    if not candidates:
+        p = find_nearest_point_outside_avoid_mask(image_rgb, base_x, base_y, avoid_mask=avoid_mask)
+        p["disable_multi_point"] = bool(FALLBACK_DISABLE_MULTI_POINT_PROMPT)
+        candidates.append(p)
+
+    candidates.sort(key=lambda p: float(p.get("point_score", 0.0)), reverse=True)
+
+    selected: List[Dict[str, Any]] = []
+    seen = set()
+    min_spacing = max(20, int(round(min(h, w) * 0.06)))
+    for p in candidates:
+        x = int(p["x"])
+        y = int(p["y"])
+        key = (x, y)
+        if key in seen:
+            continue
+        too_close = any((x - int(q["x"])) ** 2 + (y - int(q["y"])) ** 2 < min_spacing ** 2 for q in selected)
+        if too_close:
+            continue
+        seen.add(key)
+        selected.append(p)
+        if len(selected) >= int(FALLBACK_MAX_CANDIDATE_POINTS):
+            break
+
+    return selected, {
+        "fallback_strategy": "global_foreground_and_grid",
+        "foreground_info": foreground_info,
+        "raw_candidates": candidates[:20],
+        "selected_candidate_count": int(len(selected)),
+    }
+
+
 def make_candidate_point_from_center_fallback(image_rgb: np.ndarray, result=None, target_class_name: str = "plate") -> Tuple[List[Dict[str, Any]], Dict[str, Any], Dict[str, Any]]:
     h, w = image_rgb.shape[:2]
     base_xy = ratio_to_xy(PLATE_FALLBACK_POINT_RATIO, image_rgb.shape) or (w // 2, h // 2)
     base_x, base_y = base_xy
     avoid_mask = build_fallback_avoid_mask(result, image_rgb.shape, avoid_class_names=FALLBACK_AVOID_CLASS_NAMES)
-    p = find_nearest_point_outside_avoid_mask(image_rgb, base_x, base_y, avoid_mask=avoid_mask)
-    candidate_points = [{
-        "x": int(p["x"]),
-        "y": int(p["y"]),
-        "point_score": float(p.get("point_score", 1.0)),
-        "point_detail": p.get("point_detail", {}),
-        "stage": p.get("stage", "center_fallback"),
-    }]
+    candidate_points, point_meta = make_global_plate_fallback_candidates(image_rgb, avoid_mask=avoid_mask)
+    if candidate_points:
+        first_point = candidate_points[0]
+    else:
+        first_point = find_nearest_point_outside_avoid_mask(image_rgb, base_x, base_y, avoid_mask=avoid_mask)
+        first_point["disable_multi_point"] = bool(FALLBACK_DISABLE_MULTI_POINT_PROMPT)
+        candidate_points = [first_point]
     point_info = {
         "box": None,
         "conf": None,
@@ -670,13 +897,12 @@ def make_candidate_point_from_center_fallback(image_rgb: np.ndarray, result=None
         "class_name": target_class_name,
         "target_mask": None,
         "avoid_mask": avoid_mask,
-        "x": int(p["x"]),
-        "y": int(p["y"]),
-        "mode": "center_fallback_no_plate",
+        "x": int(first_point["x"]),
+        "y": int(first_point["y"]),
+        "mode": "global_fallback_no_plate",
         "fallback_base_point": [int(base_x), int(base_y)],
         "avoid_mask_area": int((avoid_mask > 0).sum()) if avoid_mask is not None else 0,
     }
-    point_meta = {"raw_candidates": candidate_points}
     return candidate_points, point_info, point_meta
 
 
@@ -874,8 +1100,10 @@ def run_sam2_by_candidate_points(image_rgb: np.ndarray, candidate_points: Sequen
     best = None
     tried = []
     multi_points = list(candidate_points[:MULTI_POINT_COUNT])
+    allow_multi_point = not any(bool(p.get("disable_multi_point")) for p in multi_points)
+    evaluate_all_single_points = any(bool(p.get("disable_multi_point")) for p in candidate_points)
 
-    if len(multi_points) >= 2:
+    if allow_multi_point and len(multi_points) >= 2:
         try:
             masks = run_sam2_masks_by_points(image_rgb=image_rgb, points=multi_points, model_name=model_name)
             avg_point_score = float(np.mean([p.get("point_score", 0.0) for p in multi_points]))
@@ -930,7 +1158,7 @@ def run_sam2_by_candidate_points(image_rgb: np.ndarray, candidate_points: Sequen
                 tried.append({"mode": "single_point", "x": x, "y": y, "point_score": point_score, "sam_score": float(sam_score), "sam_detail": detail, "mask_index": int(mask_idx)})
                 if best is None or item["sam_score"] > best["sam_score"]:
                     best = item
-                if sam_score > -100 and detail.get("reason") == "ok":
+                if not evaluate_all_single_points and sam_score > -100 and detail.get("reason") == "ok":
                     item["tried"] = tried
                     return mask, item
 
