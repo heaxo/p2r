@@ -1034,6 +1034,7 @@
       selected: null,
       editingItem: null,
       pollTimer: null,
+      pollInFlight: false,
       itemPreviewUrl: null,
       importTimer: null,
       importStartedAt: 0,
@@ -1741,19 +1742,26 @@
     async function savePointPicker() {
       const item = state.pointPickingItem;
       if (!state.selectedId || !item) return;
-      const form = appendItemFields(new FormData(), item, {
-        plate_point_ratio: state.pointDraft.plate,
-        paper_point_ratio: state.pointDraft.paper,
-      });
+      const form = new FormData();
+      form.append('plate_point_ratio', state.pointDraft.plate || '');
+      form.append('paper_point_ratio', state.pointDraft.paper || '');
+      setButtonLoading(els.savePointPickerBtn, true, '保存中...');
       setMessage(els.pointPickerMessage, '正在保存点坐标...');
       try {
-        const payload = await request(`/datasets/${state.selectedId}/items/${item.id}`, { method: 'PUT', body: form });
-        state.selected = payload.dataset;
+        const payload = await request(`/datasets/${state.selectedId}/items/${item.id}/points`, { method: 'PATCH', body: form });
+        if (state.selected && payload.item) {
+          const index = (state.selected.items || []).findIndex(row => row.id === payload.item.id);
+          if (index >= 0) {
+            state.selected.items[index] = payload.item;
+          }
+        }
         renderSelectedDataset();
         hideModal('pointPickerModal');
         setMessage(els.detailMessage, '点坐标已保存', 'success');
       } catch (error) {
         showError(els.pointPickerMessage, error);
+      } finally {
+        setButtonLoading(els.savePointPickerBtn, false);
       }
     }
 
@@ -1848,6 +1856,7 @@
 
     async function recognizeSelectedDataset() {
       if (!state.selectedId) return;
+      setButtonLoading(els.recognizeDatasetBtn, true, '提交中...');
       setMessage(els.detailMessage, '已提交识别任务...');
       try {
         const form = new FormData();
@@ -1860,6 +1869,9 @@
         startOrStopPolling();
       } catch (error) {
         showError(els.detailMessage, error);
+      } finally {
+        setButtonLoading(els.recognizeDatasetBtn, false);
+        renderSelectedDataset();
       }
     }
 
@@ -1991,8 +2003,11 @@
         clearInterval(state.pollTimer);
         state.pollTimer = null;
       }
+      state.pollInFlight = false;
       if (state.selected && state.selected.status === 'recognizing') {
         state.pollTimer = setInterval(async () => {
+          if (state.pollInFlight) return;
+          state.pollInFlight = true;
           try {
             const payload = await request(`/datasets/${state.selectedId}`);
             state.selected = payload.dataset;
@@ -2004,6 +2019,8 @@
           } catch (error) {
             showError(els.detailMessage, error);
             startOrStopPolling();
+          } finally {
+            state.pollInFlight = false;
           }
         }, 2000);
       }

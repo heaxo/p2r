@@ -146,6 +146,30 @@ class DatasetService:
             raise KeyError(item_id)
         return self.item_to_response(updated)
 
+    def update_item_points(
+        self,
+        dataset_id: str,
+        item_id: str,
+        *,
+        plate_point_ratio: str | None,
+        paper_point_ratio: str | None,
+    ) -> Dict[str, Any]:
+        self._require_dataset(dataset_id)
+        current = self.store.get_item(item_id, dataset_id)
+        if current is None:
+            raise KeyError(item_id)
+
+        self.store.update_item(
+            item_id,
+            dataset_id,
+            plate_point_ratio=plate_point_ratio or "",
+            paper_point_ratio=paper_point_ratio or "",
+        )
+        updated = self.store.get_item(item_id, dataset_id)
+        if updated is None:
+            raise KeyError(item_id)
+        return self.item_to_response(updated)
+
     def delete_item(self, dataset_id: str, item_id: str) -> None:
         self._require_dataset(dataset_id)
         self.store.delete_item(item_id, dataset_id)
@@ -259,6 +283,10 @@ class DatasetService:
 
             item_id = item["id"]
             try:
+                latest_item = self.store.get_item(item_id, dataset_id)
+                if latest_item is None or latest_item.get("status") != "queued":
+                    continue
+                item = latest_item
                 image_path = Path(str(item.get("image_path") or ""))
                 if not image_path.exists():
                     raise FileNotFoundError(f"图片文件不存在：{image_path}")
@@ -818,7 +846,6 @@ class DatasetService:
             "detected_plate_dimensions": (result or {}).get("detected_plate_dimensions", {}),
             "dxf_geometry": (result or {}).get("dxf_geometry", {}),
             "dxf_postprocess": (result or {}).get("dxf_postprocess", {}),
-            "result": result,
         }
 
     def _parse_excel_rows(self, content: bytes) -> list[Dict[str, Any]]:

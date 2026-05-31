@@ -382,6 +382,28 @@ async def update_dataset_item(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 
 
+@router.patch("/datasets/{dataset_id}/items/{item_id}/points", dependencies=[Depends(require_token)])
+async def update_dataset_item_points(
+    dataset_id: str,
+    item_id: str,
+    plate_point_ratio: Annotated[str | None, Form(description="用户指定钢板点比例坐标 ratio_x,ratio_y")] = None,
+    paper_point_ratio: Annotated[str | None, Form(description="用户指定A4纸点比例坐标 ratio_x,ratio_y")] = None,
+) -> dict:
+    try:
+        item = await run_in_threadpool(
+            dataset_service.update_item_points,
+            dataset_id,
+            item_id,
+            plate_point_ratio=plate_point_ratio,
+            paper_point_ratio=paper_point_ratio,
+        )
+        return {"ok": True, "item": item}
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据不存在") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+
 @router.delete("/datasets/{dataset_id}/items/{item_id}", dependencies=[Depends(require_token)])
 async def delete_dataset_item(dataset_id: str, item_id: str) -> dict:
     try:
