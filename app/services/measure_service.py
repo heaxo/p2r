@@ -205,6 +205,7 @@ class MeasureService:
             "topdown": result.get("topdown", {}),
             "input": result.get("input", {}),
             "model": result.get("model", {}),
+            "reference": result.get("reference", {}),
             "paper": result.get("paper", {}),
             "plate": result.get("plate", {}),
             "fill_paper_to_plate": result.get("fill_paper_to_plate", {}),

@@ -81,7 +81,7 @@ DEFAULT_OUTPUT_ROOT = os.getenv("OUTPUT_ROOT", "./output_http")
 DEFAULT_SAM_MODEL_NAME = os.getenv("SAM_MODEL_NAME", "sam2")
 
 YOLO_CONF = 0.35
-YOLO_IMGSZ = 1280
+YOLO_IMGSZ = 960
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 

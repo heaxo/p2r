@@ -42,6 +42,8 @@ from PIL import Image, ImageDraw, ImageOps
 from loguru import logger
 from ultralytics import YOLO
 
+from app.core.charuco_detector import detect_charuco_reference
+
 
 # =========================
 # 默认配置
@@ -1803,6 +1805,7 @@ def find_plate_quad_from_contour(plate_contour: np.ndarray) -> Tuple[np.ndarray,
 def build_plate_homography_from_quad(
     plate_quad_px: np.ndarray,
     calibration_H_px_to_mm: np.ndarray,
+    scale_reference_label: str = "a4_homography_estimated_plate_quad_size",
 ) -> Tuple[np.ndarray, np.ndarray, Tuple[float, float], Dict[str, Any]]:
     plate_quad_px = order_quad_points(plate_quad_px)
     plate_quad_mm_est = transform_points_px_to_mm(plate_quad_px, calibration_H_px_to_mm)
@@ -1825,9 +1828,10 @@ def build_plate_homography_from_quad(
     info = {
         "enabled": True,
         "source": "plate_quad",
-        "scale_reference": "a4_homography_estimated_plate_quad_size",
-        "note": "Perspective source points use the plate quad. Because the plate's real dimensions are unknown, target rectangle size is estimated from the A4 calibration homography.",
+        "scale_reference": scale_reference_label,
+        "note": "Perspective source points use the plate quad. Because the plate's real dimensions are unknown, target rectangle size is estimated from the selected reference homography.",
         "plate_quad_px_tl_tr_br_bl": np.round(plate_quad_px, 3).tolist(),
+        "plate_quad_mm_estimated_by_reference": np.round(plate_quad_mm_est, 3).tolist(),
         "plate_quad_mm_estimated_by_a4": np.round(plate_quad_mm_est, 3).tolist(),
         "target_width_mm": round(float(target_w), 3),
         "target_height_mm": round(float(target_h), 3),
@@ -2099,6 +2103,7 @@ def save_topdown_warp_outputs(
     H_px_to_mm: np.ndarray,
     mm_per_px: float = 2.0,
     padding_mm: float = 50.0,
+    bounds_source: str = "plate",
 ) -> Dict[str, Any]:
     """
     基于当前透视 Homography，把原图和最终钢板 mask 透视展开成俯视图。
@@ -2115,6 +2120,7 @@ def save_topdown_warp_outputs(
         俯视图四周额外留白，单位 mm。
     """
 
+    bounds_source = (bounds_source or "plate").strip().lower()
     plate_outer_contour = _largest_contour_from_mask(final_plate_mask)
     if plate_outer_contour is None or len(plate_outer_contour) < 4:
         raise RuntimeError("无法从 final_plate_mask 提取钢板轮廓，不能生成俯视矫正图")
@@ -2123,6 +2129,15 @@ def save_topdown_warp_outputs(
 
     # 原图钢板轮廓 -> 毫米坐标
     plate_contour_mm = transform_points_px_to_mm(plate_contour_px, H_px_to_mm)
+    if bounds_source == "image":
+        img_h, img_w = image_rgb.shape[:2]
+        image_corners_px = np.array([
+            [0.0, 0.0],
+            [float(img_w), 0.0],
+            [float(img_w), float(img_h)],
+            [0.0, float(img_h)],
+        ], dtype=np.float32)
+        plate_contour_mm = transform_points_px_to_mm(image_corners_px, H_px_to_mm)
 
     x_min = float(np.min(plate_contour_mm[:, 0]) - padding_mm)
     y_min = float(np.min(plate_contour_mm[:, 1]) - padding_mm)
@@ -2187,6 +2202,7 @@ def save_topdown_warp_outputs(
         "topdown": {
             "mm_per_px": float(mm_per_px),
             "padding_mm": float(padding_mm),
+            "bounds_source": bounds_source,
             "width_mm": round(width_mm, 2),
             "height_mm": round(height_mm, 2),
             "output_width_px": int(out_w),
@@ -2629,18 +2645,34 @@ def fit_ellipse_like_mm(points_mm: np.ndarray, pixel_circle_info: dict | None = 
     aspect_ratio = major_diameter / max(minor_diameter, 1e-6)
     pixel_circle = bool((pixel_circle_info or {}).get("is_circle_like"))
 
-    is_ellipse_like = (
-        0.72 <= area_ratio <= 1.18
+    # Only replace a detected contour with an analytic ellipse when the contour is
+    # very close to an ellipse. A broad ellipse fit is easy for many irregular
+    # plate outlines and would destroy a valid SAM2 outer contour.
+    strict_ellipse_like = (
+        0.88 <= area_ratio <= 1.08
         and aspect_ratio <= 3.0
-        and circularity >= 0.45
-        and (
-            radial_std <= 0.11
-            or (pixel_circle and radial_std <= 0.18 and radial_p95 <= 0.38)
-        )
+        and circularity >= 0.58
+        and radial_std <= 0.055
+        and radial_p95 <= 0.12
     )
+    circle_scaled_to_ellipse = (
+        pixel_circle
+        and 0.82 <= area_ratio <= 1.12
+        and aspect_ratio <= 3.0
+        and radial_std <= 0.12
+        and radial_p95 <= 0.24
+    )
+    is_ellipse_like = strict_ellipse_like or circle_scaled_to_ellipse
 
     return {
         "is_ellipse_like": bool(is_ellipse_like),
+        "ellipse_acceptance": (
+            "strict_ellipse"
+            if strict_ellipse_like
+            else "circle_scaled_to_ellipse"
+            if circle_scaled_to_ellipse
+            else "rejected_not_ellipse_like"
+        ),
         "center_x": float(cx),
         "center_y": float(cy),
         "major_diameter": major_diameter,
@@ -2805,37 +2837,67 @@ def process_one_image(args) -> Dict[str, Any]:
         "canonical_image": str(canonical_image_path)
     }
 
-    # 1. paper：默认直接用 YOLO；可切换成 YOLO -> 点 -> SAM2
+    charuco_reference = detect_charuco_reference(image_rgb)
+    reference_selection_info: Dict[str, Any] = {
+        "priority": ["charuco", "a4"],
+        "charuco": charuco_reference.as_dict(),
+        "selected_source": "charuco" if charuco_reference.ok else None,
+    }
+    if charuco_reference.ok:
+        logger.info(
+            "ChArUco reference detected: corners={}, markers={}, rmse_px={}",
+            charuco_reference.info.get("charuco_corner_count"),
+            charuco_reference.info.get("marker_count"),
+            charuco_reference.info.get("reprojection_rmse_px"),
+        )
+    else:
+        logger.info("ChArUco reference unavailable, A4 fallback will be used: reason={}", charuco_reference.failure_reason)
+
+    # 1. paper：仅在 ChArUco 不可用时作为 A4 fallback 检测
+    paper_mask = None
+    paper_info: Dict[str, Any] = {}
     paper_class_names = parse_name_list(args.paper_class) or ["paper"]
     print(f"args.paper_source:{args.paper_source}")
     print(f"args.sam_model:{args.sam_model}")
-    if args.paper_source == "yolo":
-        paper_mask, paper_info = run_paper_from_yolo_only(
-            result=result,
-            image_rgb=image_rgb,
-            paper_class_names=paper_class_names,
-        )
+    if charuco_reference.ok:
+        paper_info = {
+            "skipped": True,
+            "reason": "charuco_reference_selected",
+            "message": "ChArUco reference detected; A4 paper detection was not required.",
+        }
     else:
-        paper_mask, paper_info = run_sam2_for_paper_from_yolo(
-            result=result,
-            image_rgb=image_rgb,
-            paper_class_names=paper_class_names,
-            model_name=args.sam_model,
-            fallback_to_yolo_mask=bool(args.paper_sam2_yolo_fallback),
-            detect_by_sam2=True,
-        )
+        if args.paper_source == "yolo":
+            paper_mask, paper_info = run_paper_from_yolo_only(
+                result=result,
+                image_rgb=image_rgb,
+                paper_class_names=paper_class_names,
+            )
+        else:
+            paper_mask, paper_info = run_sam2_for_paper_from_yolo(
+                result=result,
+                image_rgb=image_rgb,
+                paper_class_names=paper_class_names,
+                model_name=args.sam_model,
+                fallback_to_yolo_mask=bool(args.paper_sam2_yolo_fallback),
+                detect_by_sam2=True,
+            )
 
-    if paper_mask is not None and int((paper_mask > 0).sum()) > 0:
-        mask_paths["paper_mask"] = save_mask(paper_mask, run_dir / "paper_mask.png")
-        logger.info(
-            "Paper mask ready: source={}, area_px={}, path={}",
-            args.paper_source,
-            int((paper_mask > 0).sum()),
-            mask_paths["paper_mask"],
-        )
-    else:
-        logger.error("Paper mask missing: paper_info={}", paper_info)
-        raise RuntimeError("未得到 paper mask，无法基于 A4 计算尺寸")
+        if paper_mask is not None and int((paper_mask > 0).sum()) > 0:
+            mask_paths["paper_mask"] = save_mask(paper_mask, run_dir / "paper_mask.png")
+            reference_selection_info["selected_source"] = "a4"
+            logger.info(
+                "Paper mask ready: source={}, area_px={}, path={}",
+                args.paper_source,
+                int((paper_mask > 0).sum()),
+                mask_paths["paper_mask"],
+            )
+        else:
+            reference_selection_info["a4_failure"] = paper_info
+            logger.error("Reference detection failed: charuco={}, paper_info={}", charuco_reference.failure_reason, paper_info)
+            raise RuntimeError(
+                "没有检测到可靠参考物：ChArUco 检测失败或角点不足，A4 纸检测也失败；"
+                f"ChArUco原因：{charuco_reference.failure_reason or 'unknown'}"
+            )
 
     # 2. plate：YOLO -> 多点 -> SAM2 / 中心兜底
     plate_mask, plate_point_info = run_sam2_for_plate_from_yolo_or_fallback(
@@ -2864,46 +2926,67 @@ def process_one_image(args) -> Dict[str, Any]:
         mask_paths["plate_final_with_paper_fill"],
     )
 
-    # 4. 从 paper mask 或用户指定四角中获取 A4 四角
-    if args.paper_points:
-        paper_quad_px = parse_points(args.paper_points)
+    # 4. 获取被选中的参考物四角。ChArUco 成功时跳过 A4 四角计算。
+    if charuco_reference.ok:
+        paper_quad_px = np.asarray(charuco_reference.reference_quad_px, dtype=np.float32)
+        paper_quad_mm = np.asarray(charuco_reference.reference_quad_mm, dtype=np.float32)
         paper_quad_info = {
-            "mode": "manual_points",
+            "mode": "charuco_reference",
             "paper_quad_px_tl_tr_br_bl": np.round(paper_quad_px, 3).tolist(),
+            "note": "This quad is the ChArUco board area, not an A4 paper quad.",
         }
         paper_cleaned_mask = _binary_mask(paper_mask)
-        logger.info("Using manual paper points: {}", paper_quad_info["paper_quad_px_tl_tr_br_bl"])
+        used_orientation = None
+        a4_size = (None, None)
+        H_a4 = None
+        a4_paper_quad_mm = None
     else:
-        paper_quad_px, paper_quad_info, paper_cleaned_mask = find_paper_quad_from_mask(
-            paper_mask,
-            mode=args.paper_rect_mode,
-        )
+        if args.paper_points:
+            paper_quad_px = parse_points(args.paper_points)
+            paper_quad_info = {
+                "mode": "manual_points",
+                "paper_quad_px_tl_tr_br_bl": np.round(paper_quad_px, 3).tolist(),
+            }
+            paper_cleaned_mask = _binary_mask(paper_mask)
+            logger.info("Using manual paper points: {}", paper_quad_info["paper_quad_px_tl_tr_br_bl"])
+        else:
+            try:
+                paper_quad_px, paper_quad_info, paper_cleaned_mask = find_paper_quad_from_mask(
+                    paper_mask,
+                    mode=args.paper_rect_mode,
+                )
+            except Exception as exc:
+                reference_selection_info["a4_quad_failure"] = str(exc)
+                raise RuntimeError(
+                    "没有检测到可靠参考物：ChArUco 检测失败或角点不足，A4 纸四角计算也失败；"
+                    f"ChArUco原因：{charuco_reference.failure_reason or 'unknown'}；A4原因：{exc}"
+                ) from exc
 
-        # 基于 A4 尺寸做二次矫正
-        refine_orientation = args.a4_orientation
-        if refine_orientation == "auto":
-            top = np.linalg.norm(paper_quad_px[1] - paper_quad_px[0])
-            right = np.linalg.norm(paper_quad_px[2] - paper_quad_px[1])
-            refine_orientation = "landscape" if top >= right else "portrait"
+            # 基于 A4 尺寸做二次矫正
+            refine_orientation = args.a4_orientation
+            if refine_orientation == "auto":
+                top = np.linalg.norm(paper_quad_px[1] - paper_quad_px[0])
+                right = np.linalg.norm(paper_quad_px[2] - paper_quad_px[1])
+                refine_orientation = "landscape" if top >= right else "portrait"
 
-        paper_quad_px_refined, refine_info = refine_paper_quad_by_a4_rect(
-            paper_mask=paper_cleaned_mask,
-            paper_quad_px=paper_quad_px,
-            orientation=refine_orientation,
-            scale_px_per_mm=3.0,
-            padding_mm=20.0,
-        )
+            paper_quad_px_refined, refine_info = refine_paper_quad_by_a4_rect(
+                paper_mask=paper_cleaned_mask,
+                paper_quad_px=paper_quad_px,
+                orientation=refine_orientation,
+                scale_px_per_mm=3.0,
+                padding_mm=20.0,
+            )
 
-        paper_quad_info["before_refine_quad_px"] = np.round(paper_quad_px, 3).tolist()
-        paper_quad_info["refine_info"] = refine_info
-        paper_quad_px = paper_quad_px_refined
-        paper_quad_info["paper_quad_px_tl_tr_br_bl"] = np.round(paper_quad_px, 3).tolist()
-        logger.info(
-            "Paper quad detected and refined: mode={}, orientation={}, quad={}",
-            args.paper_rect_mode,
-            refine_orientation,
-            paper_quad_info["paper_quad_px_tl_tr_br_bl"],
-        )
+            paper_quad_info["before_refine_quad_px"] = np.round(paper_quad_px, 3).tolist()
+            paper_quad_info["refine_info"] = refine_info
+            paper_quad_px = paper_quad_px_refined
+            paper_quad_info["paper_quad_px_tl_tr_br_bl"] = np.round(paper_quad_px, 3).tolist()
+            logger.info(
+                "Paper quad detected and refined: mode={}, orientation={}, quad={}",
+                args.paper_rect_mode,
+                refine_orientation,
+                paper_quad_info["paper_quad_px_tl_tr_br_bl"],
+            )
 
     # 5. 钢板外轮廓 -> mm 坐标
     plate_outer_contour = _largest_contour_from_mask(final_plate_mask)
@@ -2914,41 +2997,66 @@ def process_one_image(args) -> Dict[str, Any]:
     plate_contour_px = plate_outer_contour.reshape(-1, 2).astype(np.float32)
     pixel_circle_info = fit_circle_px(plate_contour_px)
 
-    H_a4, a4_paper_quad_mm, a4_size, used_orientation = build_a4_homography(
-        paper_quad_px,
-        orientation=args.a4_orientation,
-    )
-    logger.info(
-        "A4 homography built: requested_orientation={}, used_orientation={}, a4_size_mm={}",
-        args.a4_orientation,
-        used_orientation,
-        a4_size,
-    )
-
     perspective_source = str(getattr(args, "perspective_source", "a4") or "a4").strip().lower()
     if perspective_source not in {"a4", "plate"}:
         raise ValueError("--perspective-source 只能是 a4 / plate")
 
-    H = H_a4
-    paper_quad_mm = a4_paper_quad_mm
-    perspective_info: Dict[str, Any] = {
-        "enabled": True,
-        "requested_source": perspective_source,
-        "source": "a4_quad",
-        "scale_reference": "a4_real_size",
-        "a4_size_mm": [round(float(a4_size[0]), 3), round(float(a4_size[1]), 3)],
-        "paper_quad_px_tl_tr_br_bl": np.round(order_quad_points(paper_quad_px), 3).tolist(),
-        "paper_quad_mm_tl_tr_br_bl": np.round(paper_quad_mm, 3).tolist(),
-    }
+    if charuco_reference.ok:
+        H_calibration = np.asarray(charuco_reference.H_px_to_mm, dtype=np.float64)
+        H = H_calibration
+        paper_quad_mm = np.asarray(charuco_reference.reference_quad_mm, dtype=np.float32)
+        perspective_info: Dict[str, Any] = {
+            "enabled": True,
+            "requested_source": perspective_source,
+            "source": "charuco_board",
+            "scale_reference": "charuco_board_real_size",
+            "charuco_size_mm": [
+                round(float(charuco_reference.size_mm[0]), 3),
+                round(float(charuco_reference.size_mm[1]), 3),
+            ],
+            "reference_quad_px_tl_tr_br_bl": np.round(order_quad_points(paper_quad_px), 3).tolist(),
+            "reference_quad_mm_tl_tr_br_bl": np.round(paper_quad_mm, 3).tolist(),
+            "charuco": charuco_reference.as_dict(),
+        }
+        logger.info("ChArUco homography selected")
+    else:
+        H_a4, a4_paper_quad_mm, a4_size, used_orientation = build_a4_homography(
+            paper_quad_px,
+            orientation=args.a4_orientation,
+        )
+        logger.info(
+            "A4 homography built: requested_orientation={}, used_orientation={}, a4_size_mm={}",
+            args.a4_orientation,
+            used_orientation,
+            a4_size,
+        )
+        H_calibration = H_a4
+        H = H_a4
+        paper_quad_mm = a4_paper_quad_mm
+        perspective_info = {
+            "enabled": True,
+            "requested_source": perspective_source,
+            "source": "a4_quad",
+            "scale_reference": "a4_real_size",
+            "a4_size_mm": [round(float(a4_size[0]), 3), round(float(a4_size[1]), 3)],
+            "paper_quad_px_tl_tr_br_bl": np.round(order_quad_points(paper_quad_px), 3).tolist(),
+            "paper_quad_mm_tl_tr_br_bl": np.round(paper_quad_mm, 3).tolist(),
+        }
 
     if perspective_source == "plate":
         plate_quad_px, plate_quad_info = find_plate_quad_from_contour(plate_outer_contour)
         H, plate_rect_mm, plate_rect_size, perspective_info = build_plate_homography_from_quad(
             plate_quad_px=plate_quad_px,
-            calibration_H_px_to_mm=H_a4,
+            calibration_H_px_to_mm=H_calibration,
+            scale_reference_label=(
+                "charuco_homography_estimated_plate_quad_size"
+                if charuco_reference.ok
+                else "a4_homography_estimated_plate_quad_size"
+            ),
         )
         perspective_info["requested_source"] = perspective_source
         perspective_info["quad_info"] = plate_quad_info
+        perspective_info["calibration_source"] = "charuco" if charuco_reference.ok else "a4"
         paper_quad_mm = transform_points_px_to_mm(paper_quad_px, H)
         logger.info(
             "Plate-based perspective homography selected: plate_rect_size_mm={}, quad_source={}",
@@ -2956,7 +3064,7 @@ def process_one_image(args) -> Dict[str, Any]:
             plate_quad_info.get("quad_source"),
         )
     else:
-        logger.info("A4-based perspective homography selected")
+        logger.info("{}-based perspective homography selected", "ChArUco" if charuco_reference.ok else "A4")
 
     plate_contour_mm_raw = transform_points_px_to_mm(plate_contour_px, H)
     dxf_target_x_mm = getattr(args, "dxf_target_x_mm", None)
@@ -3156,6 +3264,7 @@ def process_one_image(args) -> Dict[str, Any]:
             H_px_to_mm=H,
             mm_per_px=args.topdown_mm_per_px,
             padding_mm=args.topdown_padding_mm,
+            bounds_source="image" if charuco_reference.ok else "plate",
         )
         mask_paths.update(topdown_info["topdown"]["paths"])
         logger.info("Topdown outputs generated: paths={}", topdown_info["topdown"]["paths"])
@@ -3218,6 +3327,7 @@ def process_one_image(args) -> Dict[str, Any]:
             "yolo_detected_classes": detected_class_names(result),
             "sam_model": args.sam_model,
         },
+        "reference": json_safe(reference_selection_info),
         "paper": paper_info,
         "plate": {
             "point_info": json_safe(clean_plate_point_info),
