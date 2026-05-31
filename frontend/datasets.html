@@ -1359,8 +1359,39 @@
     }
 
     function filterItems(items) {
-      if (state.itemFilter === 'all') return items;
-      return items.filter(item => itemFilterKey(item) === state.itemFilter);
+      const filtered = state.itemFilter === 'all'
+        ? items
+        : items.filter(item => itemFilterKey(item) === state.itemFilter);
+      return sortItemsByRecognizedTime(filtered);
+    }
+
+    function sortItemsByRecognizedTime(items) {
+      return [...items].sort((a, b) => {
+        const diff = itemRecognizedTime(b) - itemRecognizedTime(a);
+        if (diff !== 0) return diff;
+        return itemStableOrder(b) - itemStableOrder(a);
+      });
+    }
+
+    function itemRecognizedTime(item) {
+      const candidates = [
+        item && item.finished_at,
+        item && item.recognized_at,
+        item && item.updated_at,
+        item && item.started_at,
+        item && item.created_at,
+      ];
+      for (const value of candidates) {
+        if (!value) continue;
+        const time = Date.parse(value);
+        if (Number.isFinite(time)) return time;
+      }
+      return 0;
+    }
+
+    function itemStableOrder(item) {
+      const raw = Number((item && (item.row_order ?? item.row_index ?? item.id)) || 0);
+      return Number.isFinite(raw) ? raw : 0;
     }
 
     function renderItemFilter(items) {

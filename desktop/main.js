@@ -92,7 +92,7 @@ function startupHtml(percent, message) {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Pic2Remnant</title>
+  <title>启动中</title>
   <style>
     html, body {
       width: 100%;
@@ -100,7 +100,7 @@ function startupHtml(percent, message) {
       margin: 0;
       font-family: Arial, "Microsoft YaHei", sans-serif;
       color: #1f2937;
-      background: #eef2f7;
+      background: #f3f6fb;
       overflow: hidden;
     }
     body {
@@ -109,37 +109,27 @@ function startupHtml(percent, message) {
       justify-content: center;
     }
     .shell {
-      width: 420px;
-      padding: 30px 32px;
-      background: #ffffff;
-      border: 1px solid #d7deea;
-      border-radius: 8px;
-      box-shadow: 0 12px 36px rgba(15, 23, 42, .16);
-    }
-    h1 {
-      margin: 0 0 18px;
-      font-size: 22px;
-      line-height: 1.2;
-      font-weight: 700;
-      letter-spacing: 0;
+      width: min(460px, calc(100vw - 64px));
+      padding: 0;
     }
     .message {
       min-height: 22px;
-      margin-bottom: 16px;
+      margin-bottom: 14px;
       font-size: 14px;
-      color: #667085;
+      color: #344054;
+      text-align: center;
     }
     .track {
       width: 100%;
       height: 10px;
       overflow: hidden;
-      background: #e5eaf3;
+      background: #d9e2ef;
       border-radius: 999px;
     }
     .bar {
       width: ${safePercent}%;
       height: 100%;
-      background: #2d579b;
+      background: linear-gradient(90deg, #2d579b, #4c7fd3);
       border-radius: 999px;
       transition: width .25s ease;
     }
@@ -153,7 +143,6 @@ function startupHtml(percent, message) {
 </head>
 <body>
   <div class="shell">
-    <h1>Pic2Remnant</h1>
     <div class="message">${safeMessage}</div>
     <div class="track"><div class="bar"></div></div>
     <div class="percent">${safePercent}%</div>

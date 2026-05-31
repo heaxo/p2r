@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import math
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 import numpy as np
+
+try:
+    import cv2
+except Exception:  # pragma: no cover - DXF polyline/arc output still works without OpenCV.
+    cv2 = None
 
 
 @dataclass
@@ -36,6 +41,13 @@ class DxfGeometryOptimizeConfig:
     circle_min_circularity: float = 0.94
     circle_max_radial_error_ratio: float = 0.02
     circle_max_angle_gap_deg: float = 60.0
+    ellipse_enabled: bool = False
+    ellipse_tolerance_mm: float = 5.0
+    ellipse_max_tolerance_mm: float = 10.0
+    ellipse_min_points: int = 12
+    ellipse_min_axis_ratio: float = 0.15
+    ellipse_max_radial_error_ratio: float = 0.06
+    ellipse_max_angle_gap_deg: float = 80.0
     preprocess_enabled: bool = True
     preprocess_resample_step_mm: float = 3.0
     preprocess_min_points: int = 48
@@ -100,7 +112,8 @@ def write_optimized_dxf_multi(
     for index, (contour, layer) in enumerate(contours):
         pts = _remove_closing_duplicate(_as_points(contour))
         source_points.append(pts)
-        entities, info = optimize_contour_entities(pts, cfg)
+        contour_cfg = _config_for_layer(cfg, str(layer))
+        entities, info = optimize_contour_entities(pts, contour_cfg)
         contour_infos.append({
             "index": int(index),
             "layer": str(layer),
@@ -157,6 +170,25 @@ def write_optimized_dxf_multi(
     }
 
 
+def _config_for_layer(cfg: DxfGeometryOptimizeConfig, layer: str) -> DxfGeometryOptimizeConfig:
+    if layer != "PLATE_INNER":
+        return cfg
+
+    return replace(
+        cfg,
+        circle_tolerance_mm=max(float(cfg.circle_tolerance_mm), 8.0),
+        circle_max_tolerance_mm=max(float(cfg.circle_max_tolerance_mm), 12.0),
+        circle_min_circularity=min(float(cfg.circle_min_circularity), 0.90),
+        circle_max_radial_error_ratio=max(float(cfg.circle_max_radial_error_ratio), 0.06),
+        circle_max_angle_gap_deg=max(float(cfg.circle_max_angle_gap_deg), 80.0),
+        ellipse_enabled=True,
+        ellipse_tolerance_mm=max(float(cfg.ellipse_tolerance_mm), 6.0),
+        ellipse_max_tolerance_mm=max(float(cfg.ellipse_max_tolerance_mm), 14.0),
+        ellipse_max_radial_error_ratio=max(float(cfg.ellipse_max_radial_error_ratio), 0.08),
+        ellipse_max_angle_gap_deg=max(float(cfg.ellipse_max_angle_gap_deg), 90.0),
+    )
+
+
 def optimize_contour_entities(
     contour_mm: np.ndarray,
     config: DxfGeometryOptimizeConfig | None = None,
@@ -188,6 +220,13 @@ def optimize_contour_entities(
         info["working_points"] = int(len(pts))
         info["preprocess"] = preprocess_info
         return [circle], info
+
+    ellipse = _try_fit_full_ellipse(pts, cfg)
+    if ellipse is not None:
+        info = _summary_info(cfg, len(source_pts), [ellipse], "full_ellipse")
+        info["working_points"] = int(len(pts))
+        info["preprocess"] = preprocess_info
+        return [ellipse], info
 
     rotated, start_index = _rotate_to_best_break(pts)
     ext = np.vstack([rotated, rotated[:1]])
@@ -623,6 +662,92 @@ def _try_fit_full_circle(
     }
 
 
+def _try_fit_full_ellipse(
+    points: np.ndarray,
+    cfg: DxfGeometryOptimizeConfig,
+) -> Dict[str, Any] | None:
+    if not bool(cfg.ellipse_enabled) or cv2 is None:
+        return None
+
+    pts = _remove_closing_duplicate(_as_points(points))
+    if len(pts) < int(cfg.ellipse_min_points):
+        return None
+
+    try:
+        (cx, cy), (axis_1, axis_2), angle_deg = cv2.fitEllipse(pts.astype(np.float32).reshape(-1, 1, 2))
+    except Exception:
+        return None
+
+    if axis_1 <= 1e-6 or axis_2 <= 1e-6:
+        return None
+
+    if axis_1 >= axis_2:
+        major_radius = float(axis_1) / 2.0
+        minor_radius = float(axis_2) / 2.0
+        major_angle_deg = float(angle_deg)
+    else:
+        major_radius = float(axis_2) / 2.0
+        minor_radius = float(axis_1) / 2.0
+        major_angle_deg = float(angle_deg) + 90.0
+
+    if major_radius <= 1e-6 or minor_radius <= 1e-6:
+        return None
+
+    ratio = minor_radius / major_radius
+    if ratio < float(cfg.ellipse_min_axis_ratio) or ratio > 1.0:
+        return None
+
+    theta = math.radians(major_angle_deg)
+    major_unit = np.array([math.cos(theta), math.sin(theta)], dtype=np.float64)
+    minor_unit = np.array([-math.sin(theta), math.cos(theta)], dtype=np.float64)
+    center = np.array([float(cx), float(cy)], dtype=np.float64)
+    shifted = pts - center
+    local_x = shifted @ major_unit
+    local_y = shifted @ minor_unit
+    normalized_radius = np.sqrt((local_x / major_radius) ** 2 + (local_y / minor_radius) ** 2)
+    radial_errors = np.abs(normalized_radius - 1.0) * major_radius
+    max_error = float(np.max(radial_errors))
+    p95_error = float(np.percentile(radial_errors, 95.0))
+    rms_error = float(np.sqrt(np.mean(radial_errors ** 2)))
+
+    p95_limit = max(float(cfg.ellipse_tolerance_mm), major_radius * float(cfg.ellipse_max_radial_error_ratio) * 0.5)
+    max_limit = max(float(cfg.ellipse_max_tolerance_mm), major_radius * float(cfg.ellipse_max_radial_error_ratio))
+
+    if p95_error > p95_limit:
+        return None
+
+    if max_error > max_limit:
+        return None
+
+    if rms_error > max(2.0, float(cfg.ellipse_tolerance_mm)):
+        return None
+
+    raw_angles = np.mod(np.arctan2(local_y / minor_radius, local_x / major_radius), 2.0 * math.pi)
+    sorted_angles = np.sort(raw_angles)
+    gaps = np.diff(np.concatenate([sorted_angles, sorted_angles[:1] + 2.0 * math.pi]))
+    max_gap_deg = float(math.degrees(float(np.max(gaps))))
+    if max_gap_deg > float(cfg.ellipse_max_angle_gap_deg):
+        return None
+
+    return {
+        "type": "ELLIPSE",
+        "center": [float(cx), float(cy)],
+        "major_axis": [float(major_unit[0] * major_radius), float(major_unit[1] * major_radius)],
+        "major_radius": float(major_radius),
+        "minor_radius": float(minor_radius),
+        "ratio": float(ratio),
+        "start_param": 0.0,
+        "end_param": float(2.0 * math.pi),
+        "point_count": int(len(pts)),
+        "edge_count": int(len(pts)),
+        "max_error_mm": float(max_error),
+        "p95_error_mm": float(p95_error),
+        "rms_error_mm": float(rms_error),
+        "max_angle_gap_deg": float(max_gap_deg),
+        "angle_deg": _normalize_angle(float(major_angle_deg)),
+    }
+
+
 def _least_squares_circle(points: np.ndarray) -> Tuple[np.ndarray | None, float]:
     pts = _as_points(points)
     if len(pts) < 3:
@@ -835,6 +960,23 @@ def _entity_to_dxf_lines(
             "51", _fmt_angle(float(entity["end_angle_deg"])),
         ]
 
+    if entity_type == "ELLIPSE":
+        cx, cy = entity["center"]
+        major_x, major_y = entity["major_axis"]
+        return [
+            "0", "ELLIPSE",
+            "8", layer,
+            "10", _fmt(float(cx) + dx),
+            "20", _fmt(float(cy) + dy),
+            "30", "0.0",
+            "11", _fmt(float(major_x)),
+            "21", _fmt(float(major_y)),
+            "31", "0.0",
+            "40", _fmt(float(entity["ratio"])),
+            "41", _fmt(float(entity.get("start_param", 0.0))),
+            "42", _fmt(float(entity.get("end_param", 2.0 * math.pi))),
+        ]
+
     if entity_type == "LWPOLYLINE":
         pts = entity.get("points") or []
         lines = ["0", "LWPOLYLINE", "8", layer, "90", str(len(pts)), "70", "1"]
@@ -886,6 +1028,8 @@ def _entity_bounds(entities: List[Dict[str, Any]]) -> Tuple[float, float, float,
             bounds.append((float(cx) - r, float(cy) - r, float(cx) + r, float(cy) + r))
         elif entity_type == "ARC":
             bounds.append(_arc_bounds(entity))
+        elif entity_type == "ELLIPSE":
+            bounds.append(_ellipse_bounds(entity))
         elif entity_type == "LWPOLYLINE":
             pts = np.asarray(entity.get("points") or [], dtype=np.float64).reshape(-1, 2)
             if len(pts):
@@ -923,6 +1067,22 @@ def _arc_bounds(entity: Dict[str, Any]) -> Tuple[float, float, float, float]:
     xs = [float(cx) + math.cos(math.radians(a)) * r for a in angles]
     ys = [float(cy) + math.sin(math.radians(a)) * r for a in angles]
     return min(xs), min(ys), max(xs), max(ys)
+
+
+def _ellipse_bounds(entity: Dict[str, Any]) -> Tuple[float, float, float, float]:
+    cx, cy = entity["center"]
+    major_x, major_y = entity["major_axis"]
+    major = np.array([float(major_x), float(major_y)], dtype=np.float64)
+    major_radius = float(np.linalg.norm(major))
+    if major_radius <= 1e-9:
+        return float(cx), float(cy), float(cx), float(cy)
+
+    ratio = float(entity["ratio"])
+    minor = np.array([-major[1], major[0]], dtype=np.float64) * ratio
+    params = np.linspace(0.0, 2.0 * math.pi, 181)
+    xs = float(cx) + np.cos(params) * major[0] + np.sin(params) * minor[0]
+    ys = float(cy) + np.cos(params) * major[1] + np.sin(params) * minor[1]
+    return float(np.min(xs)), float(np.min(ys)), float(np.max(xs)), float(np.max(ys))
 
 
 def _angle_on_ccw_arc(angle: float, start: float, end: float) -> bool:
