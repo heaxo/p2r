@@ -23,3 +23,4 @@ data/
 build/
 logs_packaged_verify*/
 measure_out_packaged_verify*/
+a4_debug

@@ -42,6 +42,7 @@ from PIL import Image, ImageDraw, ImageOps
 from loguru import logger
 from ultralytics import YOLO
 
+from app.core.a4_reference_detector import detect_a4_paper_opencv
 from app.core.charuco_detector import detect_charuco_reference
 
 
@@ -2885,6 +2886,7 @@ def process_one_image(args) -> Dict[str, Any]:
         if paper_mask is not None and int((paper_mask > 0).sum()) > 0:
             mask_paths["paper_mask"] = save_mask(paper_mask, run_dir / "paper_mask.png")
             reference_selection_info["selected_source"] = "a4"
+            reference_selection_info["a4_method"] = paper_info.get("paper_mask_source") or args.paper_source
             logger.info(
                 "Paper mask ready: source={}, area_px={}, path={}",
                 args.paper_source,
@@ -2892,12 +2894,35 @@ def process_one_image(args) -> Dict[str, Any]:
                 mask_paths["paper_mask"],
             )
         else:
-            reference_selection_info["a4_failure"] = paper_info
-            logger.error("Reference detection failed: charuco={}, paper_info={}", charuco_reference.failure_reason, paper_info)
-            raise RuntimeError(
-                "没有检测到可靠参考物：ChArUco 检测失败或角点不足，A4 纸检测也失败；"
-                f"ChArUco原因：{charuco_reference.failure_reason or 'unknown'}"
-            )
+            yolo_or_sam2_paper_info = paper_info
+            paper_mask, opencv_paper_info = detect_a4_paper_opencv(image_rgb)
+            opencv_paper_info["yolo_or_sam2_fallback_info"] = yolo_or_sam2_paper_info
+            paper_info = opencv_paper_info
+            if paper_mask is not None and int((paper_mask > 0).sum()) > 0:
+                mask_paths["paper_mask"] = save_mask(paper_mask, run_dir / "paper_mask.png")
+                reference_selection_info["selected_source"] = "a4"
+                reference_selection_info["a4_method"] = "opencv"
+                reference_selection_info["a4_yolo_or_sam2_failure"] = yolo_or_sam2_paper_info
+                reference_selection_info["a4_opencv"] = opencv_paper_info
+                logger.info(
+                    "OpenCV A4 fallback succeeded: area_px={}, score={}, path={}",
+                    int((paper_mask > 0).sum()),
+                    opencv_paper_info.get("selected_score"),
+                    mask_paths["paper_mask"],
+                )
+            else:
+                reference_selection_info["a4_failure"] = yolo_or_sam2_paper_info
+                reference_selection_info["a4_opencv_failure"] = opencv_paper_info
+                logger.error(
+                    "Reference detection failed: charuco={}, paper_info={}, opencv_info={}",
+                    charuco_reference.failure_reason,
+                    yolo_or_sam2_paper_info,
+                    opencv_paper_info,
+                )
+                raise RuntimeError(
+                    "没有检测到可靠参考物：ChArUco 检测失败或角点不足，A4 纸检测也失败，OpenCV A4 兜底也未找到可靠四边形；"
+                    f"ChArUco原因：{charuco_reference.failure_reason or 'unknown'}"
+                )
 
     # 2. plate：YOLO -> 多点 -> SAM2 / 中心兜底
     plate_mask, plate_point_info = run_sam2_for_plate_from_yolo_or_fallback(
