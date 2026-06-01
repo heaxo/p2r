@@ -1269,6 +1269,20 @@
       }
     }
 
+    async function refreshDatasetList() {
+      try {
+        const payload = await request('/datasets');
+        state.datasets = payload.datasets || [];
+        if (state.selectedId && !state.datasets.some(item => item.id === state.selectedId)) {
+          clearSelection();
+        }
+        renderDatasetList();
+        setMessage(els.listMessage, state.datasets.length ? '' : '暂无数据集');
+      } catch (error) {
+        showError(els.listMessage, error);
+      }
+    }
+
     function renderDatasetList() {
       els.datasetList.innerHTML = '';
       for (const dataset of state.datasets) {
@@ -1820,7 +1834,7 @@
         state.selected = payload.dataset;
         renderSelectedDataset();
         hideModal('itemModal');
-        await loadDatasets(state.selectedId);
+        await refreshDatasetList();
       } catch (error) {
         showError(els.itemFormMessage, error);
       } finally {
@@ -1935,7 +1949,7 @@
         const payload = await request(`/datasets/${state.selectedId}/clear-recognition`, { method: 'POST' });
         state.selected = payload.dataset;
         renderSelectedDataset();
-        await loadDatasets(state.selectedId);
+        await refreshDatasetList();
         setMessage(els.detailMessage, '已清除识别状态', 'success');
       } catch (error) {
         showError(els.detailMessage, error);
@@ -1965,7 +1979,7 @@
         state.selected = payload.dataset;
         renderSelectedDataset();
         hideModal('importSettingsModal');
-        await loadDatasets(state.selectedId);
+        await refreshDatasetList();
         setMessage(els.detailMessage, '导入设置已保存', 'success');
       } catch (error) {
         showError(els.importSettingsMessage, error);
@@ -2040,7 +2054,7 @@
         const payload = await request(`/datasets/${state.selectedId}/items/${itemId}`, { method: 'DELETE' });
         state.selected = payload.dataset;
         renderSelectedDataset();
-        await loadDatasets(state.selectedId);
+        await refreshDatasetList();
       } catch (error) {
         showError(els.detailMessage, error);
         setButtonLoading(button, false);
@@ -2055,7 +2069,7 @@
         const payload = await request(`/datasets/${state.selectedId}/items/${itemId}/clear-recognition`, { method: 'POST' });
         state.selected = payload.dataset;
         renderSelectedDataset();
-        await loadDatasets(state.selectedId);
+        await refreshDatasetList();
         setMessage(els.detailMessage, '已清除识别状态', 'success');
       } catch (error) {
         showError(els.detailMessage, error);
@@ -2079,7 +2093,7 @@
             renderSelectedDataset();
             if (state.selected.status !== 'recognizing') {
               startOrStopPolling();
-              await loadDatasets(state.selectedId);
+              await refreshDatasetList();
             }
           } catch (error) {
             showError(els.detailMessage, error);

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import time
 import threading
@@ -30,6 +31,8 @@ class MeasureService:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.settings.output_root.mkdir(parents=True, exist_ok=True)
+        self._output_root_abs = Path(os.path.abspath(self.settings.output_root))
+        self._output_root_abs_norm = os.path.normcase(os.path.normpath(str(self._output_root_abs)))
         self._process_lock = threading.Lock()
         self.task_store = TaskStore(self.settings.task_db_path)
         self.task_store.mark_interrupted_tasks_failed()
@@ -169,10 +172,14 @@ class MeasureService:
     def _path_to_url(self, path: str) -> str | None:
         """Convert an output file path to a static URL when it is under output_root."""
 
+        if not path:
+            return None
         try:
-            output_root = self.settings.output_root.resolve()
-            resolved = Path(path).resolve()
-            rel = resolved.relative_to(output_root).as_posix()
+            path_abs = Path(os.path.abspath(path))
+            path_abs_norm = os.path.normcase(os.path.normpath(str(path_abs)))
+            if os.path.commonpath([self._output_root_abs_norm, path_abs_norm]) != self._output_root_abs_norm:
+                return None
+            rel = os.path.relpath(str(path_abs), str(self._output_root_abs)).replace(os.sep, "/")
             return f"{self.settings.static_url_prefix.rstrip('/')}/{rel}"
         except Exception:
             return None

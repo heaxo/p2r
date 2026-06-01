@@ -145,6 +145,7 @@ def save_postprocess_preview(
     output_path: str | Path,
     padding_mm: float = 80.0,
     mm_per_px: float = 2.0,
+    max_preview_px: int = 1800,
 ) -> str:
     """
     保存后处理对比图。
@@ -156,18 +157,30 @@ def save_postprocess_preview(
     after = _as_points(after_mm)
 
     all_pts = np.vstack([before, after])
+    if not np.all(np.isfinite(all_pts)):
+        raise ValueError("postprocess preview points contain non-finite coordinates")
+
     x_min, y_min = np.min(all_pts, axis=0) - float(padding_mm)
     x_max, y_max = np.max(all_pts, axis=0) + float(padding_mm)
 
-    w = max(100, int(round((x_max - x_min) / mm_per_px)))
-    h = max(100, int(round((y_max - y_min) / mm_per_px)))
+    width_mm = max(float(x_max - x_min), 1.0)
+    height_mm = max(float(y_max - y_min), 1.0)
+    max_preview_px = max(100, int(max_preview_px))
+    effective_mm_per_px = max(
+        float(mm_per_px),
+        width_mm / max_preview_px,
+        height_mm / max_preview_px,
+    )
+
+    w = max(100, int(round(width_mm / effective_mm_per_px)))
+    h = max(100, int(round(height_mm / effective_mm_per_px)))
 
     canvas = np.full((h, w, 3), 255, dtype=np.uint8)
 
     def to_px(pts: np.ndarray) -> np.ndarray:
         out = np.empty_like(pts, dtype=np.float32)
-        out[:, 0] = (pts[:, 0] - x_min) / mm_per_px
-        out[:, 1] = (pts[:, 1] - y_min) / mm_per_px
+        out[:, 0] = (pts[:, 0] - x_min) / effective_mm_per_px
+        out[:, 1] = (pts[:, 1] - y_min) / effective_mm_per_px
         return np.round(out).astype(np.int32)
 
     before_px = to_px(before).reshape(-1, 1, 2)

@@ -95,6 +95,10 @@ FALLBACK_DISABLE_MULTI_POINT_PROMPT = True
 FALLBACK_DARK_POINT_BRIGHTNESS = 0.16
 FALLBACK_DARK_POINT_PENALTY = 4.0
 FALLBACK_BORDER_POINT_PENALTY = 2.5
+FALLBACK_TEXT_EDGE_DENSITY = 0.04
+FALLBACK_TEXT_VARIANCE = 0.018
+PAPER_POINT_TEXT_EDGE_DENSITY = 0.035
+PAPER_POINT_TEXT_VARIANCE = 0.014
 
 # mask 合理面积范围
 MIN_SAM_MASK_AREA_RATIO_BY_CLASS = {
@@ -453,6 +457,34 @@ def score_point_cleanliness(image_rgb: np.ndarray, x: int, y: int, window_size: 
     }
 
 
+def point_text_penalty(
+    detail: Optional[Dict[str, Any]],
+    *,
+    edge_threshold: float,
+    variance_threshold: float,
+) -> float:
+    data = detail or {}
+    edge_density = float(data.get("edge_density", 1.0))
+    variance = float(data.get("variance", 1.0))
+    return (
+        max(0.0, edge_density - float(edge_threshold)) * 18.0
+        + max(0.0, variance - float(variance_threshold)) * 12.0
+    )
+
+
+def is_point_visually_clean(
+    detail: Optional[Dict[str, Any]],
+    *,
+    edge_threshold: float,
+    variance_threshold: float,
+) -> bool:
+    data = detail or {}
+    return (
+        float(data.get("edge_density", 1.0)) <= float(edge_threshold)
+        and float(data.get("variance", 1.0)) <= float(variance_threshold)
+    )
+
+
 def shrink_box(x1, y1, x2, y2, img_w, img_h, shrink_ratio: float = BOX_SHRINK_RATIO) -> Tuple[int, int, int, int]:
     x1 = float(max(0, min(img_w - 1, x1)))
     y1 = float(max(0, min(img_h - 1, y1)))
@@ -657,6 +689,102 @@ def find_nearest_point_outside_avoid_mask(image_rgb: np.ndarray, base_x: int, ba
 
     score, detail = score_point_cleanliness(image_rgb, base_x, base_y)
     return {"x": base_x, "y": base_y, "point_score": float(score), "point_detail": detail, "stage": "center_fallback_force_use_center"}
+
+
+def find_center_first_clean_fallback_point(
+    image_rgb: np.ndarray,
+    base_x: int,
+    base_y: int,
+    avoid_mask: Optional[np.ndarray] = None,
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    h, w = image_rgb.shape[:2]
+    base_x = int(max(0, min(w - 1, base_x)))
+    base_y = int(max(0, min(h - 1, base_y)))
+    checked: List[Dict[str, Any]] = []
+
+    center_score, center_detail = score_point_cleanliness(image_rgb, base_x, base_y)
+    center_penalty, center_penalty_detail = fallback_point_penalty(image_rgb.shape, base_x, base_y, center_detail)
+    center_text_penalty = point_text_penalty(
+        center_detail,
+        edge_threshold=FALLBACK_TEXT_EDGE_DENSITY,
+        variance_threshold=FALLBACK_TEXT_VARIANCE,
+    )
+    center_candidate = {
+        "x": base_x,
+        "y": base_y,
+        "point_score": float(center_score - center_penalty - center_text_penalty),
+        "point_detail": center_detail,
+        "stage": "center_fallback_direct",
+        "fallback_penalty": center_penalty_detail,
+        "text_penalty": float(center_text_penalty),
+        "hit_avoid_mask": bool(is_point_on_avoid_mask(base_x, base_y, image_rgb.shape, avoid_mask)),
+        "disable_multi_point": bool(FALLBACK_DISABLE_MULTI_POINT_PROMPT),
+    }
+    checked.append(center_candidate)
+    if (
+        not center_candidate["hit_avoid_mask"]
+        and is_point_visually_clean(
+            center_detail,
+            edge_threshold=FALLBACK_TEXT_EDGE_DENSITY,
+            variance_threshold=FALLBACK_TEXT_VARIANCE,
+        )
+    ):
+        return center_candidate, checked
+
+    step = max(5, int(FALLBACK_POINT_SEARCH_STEP_PX))
+    max_radius = int(min(h, w) * float(FALLBACK_POINT_SEARCH_MAX_RADIUS_RATIO))
+    angle_count = max(8, int(FALLBACK_POINT_SEARCH_ANGLE_COUNT))
+    best_candidate: Dict[str, Any] | None = None
+    for radius in range(step, max_radius + step, step):
+        ring_candidates: List[Dict[str, Any]] = []
+        for i in range(angle_count):
+            angle = 2.0 * np.pi * i / angle_count
+            x = int(round(base_x + np.cos(angle) * radius))
+            y = int(round(base_y + np.sin(angle) * radius))
+            if is_point_on_avoid_mask(x, y, image_rgb.shape, avoid_mask):
+                continue
+            score, detail = score_point_cleanliness(image_rgb, x, y)
+            point_penalty, penalty_detail = fallback_point_penalty(image_rgb.shape, x, y, detail)
+            text_penalty = point_text_penalty(
+                detail,
+                edge_threshold=FALLBACK_TEXT_EDGE_DENSITY,
+                variance_threshold=FALLBACK_TEXT_VARIANCE,
+            )
+            candidate = {
+                "x": x,
+                "y": y,
+                "point_score": float(score - point_penalty - text_penalty - radius / max(1.0, max_radius) * 0.35),
+                "point_detail": detail,
+                "stage": "center_fallback_clean_adjusted",
+                "search_radius": int(radius),
+                "fallback_penalty": penalty_detail,
+                "text_penalty": float(text_penalty),
+                "disable_multi_point": bool(FALLBACK_DISABLE_MULTI_POINT_PROMPT),
+            }
+            ring_candidates.append(candidate)
+        if not ring_candidates:
+            continue
+        ring_candidates.sort(key=lambda p: float(p.get("point_score", 0.0)), reverse=True)
+        checked.extend(ring_candidates[:4])
+        if best_candidate is None or float(ring_candidates[0]["point_score"]) > float(best_candidate["point_score"]):
+            best_candidate = ring_candidates[0]
+        clean_candidates = [
+            p for p in ring_candidates
+            if is_point_visually_clean(
+                p.get("point_detail"),
+                edge_threshold=FALLBACK_TEXT_EDGE_DENSITY,
+                variance_threshold=FALLBACK_TEXT_VARIANCE,
+            )
+        ]
+        if clean_candidates:
+            return clean_candidates[0], checked
+
+    if best_candidate is not None:
+        return best_candidate, checked
+    forced = find_nearest_point_outside_avoid_mask(image_rgb, base_x, base_y, avoid_mask=avoid_mask)
+    forced["disable_multi_point"] = bool(FALLBACK_DISABLE_MULTI_POINT_PROMPT)
+    checked.append(forced)
+    return forced, checked
 
 
 def fallback_point_penalty(
@@ -883,13 +1011,18 @@ def make_candidate_point_from_center_fallback(image_rgb: np.ndarray, result=None
     base_xy = ratio_to_xy(PLATE_FALLBACK_POINT_RATIO, image_rgb.shape) or (w // 2, h // 2)
     base_x, base_y = base_xy
     avoid_mask = build_fallback_avoid_mask(result, image_rgb.shape, avoid_class_names=FALLBACK_AVOID_CLASS_NAMES)
-    candidate_points, point_meta = make_global_plate_fallback_candidates(image_rgb, avoid_mask=avoid_mask)
-    if candidate_points:
-        first_point = candidate_points[0]
-    else:
-        first_point = find_nearest_point_outside_avoid_mask(image_rgb, base_x, base_y, avoid_mask=avoid_mask)
-        first_point["disable_multi_point"] = bool(FALLBACK_DISABLE_MULTI_POINT_PROMPT)
-        candidate_points = [first_point]
+    first_point, checked_points = find_center_first_clean_fallback_point(
+        image_rgb,
+        int(base_x),
+        int(base_y),
+        avoid_mask=avoid_mask,
+    )
+    candidate_points = [first_point]
+    point_meta = {
+        "fallback_strategy": "center_first_with_local_clean_adjustment",
+        "checked_candidates": checked_points[:16],
+        "selected_candidate_count": 1,
+    }
     point_info = {
         "box": None,
         "conf": None,
@@ -899,7 +1032,7 @@ def make_candidate_point_from_center_fallback(image_rgb: np.ndarray, result=None
         "avoid_mask": avoid_mask,
         "x": int(first_point["x"]),
         "y": int(first_point["y"]),
-        "mode": "global_fallback_no_plate",
+        "mode": "center_fallback_no_plate",
         "fallback_base_point": [int(base_x), int(base_y)],
         "avoid_mask_area": int((avoid_mask > 0).sum()) if avoid_mask is not None else 0,
     }
@@ -909,19 +1042,68 @@ def make_candidate_point_from_center_fallback(image_rgb: np.ndarray, result=None
 # =========================
 # paper：YOLO -> 一个点 -> SAM2
 # =========================
-def choose_one_point_inside_yolo_instance(instance: Dict[str, Any], image_shape: Sequence[int]) -> Dict[str, Any]:
+def choose_one_point_inside_yolo_instance(instance: Dict[str, Any], image_rgb_or_shape: Any) -> Dict[str, Any]:
+    image_rgb = image_rgb_or_shape if isinstance(image_rgb_or_shape, np.ndarray) else None
+    image_shape = image_rgb.shape if image_rgb is not None else image_rgb_or_shape
     h, w = image_shape[:2]
     mask = instance.get("mask")
+    candidates: List[Dict[str, Any]] = []
+
+    def add_candidate(x: int, y: int, *, stage: str, inner_dist: float = 0.0, center_bias: float = 0.0) -> None:
+        x = int(max(0, min(w - 1, x)))
+        y = int(max(0, min(h - 1, y)))
+        if mask is not None and mask.size > 0 and int((mask > 0).sum()) > 0:
+            if mask.shape != (h, w):
+                mask_u8 = cv2.resize((mask > 0).astype(np.uint8), (w, h), interpolation=cv2.INTER_NEAREST)
+            else:
+                mask_u8 = (mask > 0).astype(np.uint8)
+            if mask_u8[y, x] <= 0:
+                return
+        if image_rgb is not None:
+            clean_score, detail = score_point_cleanliness(image_rgb, x, y)
+            text_penalty = point_text_penalty(
+                detail,
+                edge_threshold=PAPER_POINT_TEXT_EDGE_DENSITY,
+                variance_threshold=PAPER_POINT_TEXT_VARIANCE,
+            )
+        else:
+            clean_score, detail, text_penalty = 0.0, {}, 0.0
+        candidates.append({
+            "x": x,
+            "y": y,
+            "source": stage,
+            "inner_dist": float(inner_dist),
+            "point_score": float(clean_score + min(float(inner_dist) / 80.0, 0.8) + center_bias - text_penalty),
+            "point_detail": detail,
+            "text_penalty": float(text_penalty),
+        })
+
     if mask is not None and mask.size > 0 and int((mask > 0).sum()) > 0:
         bin_mask = (mask > 0).astype(np.uint8)
+        if bin_mask.shape != (h, w):
+            bin_mask = cv2.resize(bin_mask, (w, h), interpolation=cv2.INTER_NEAREST)
         dist = cv2.distanceTransform(bin_mask * 255, cv2.DIST_L2, 5)
-        _, max_dist, _, max_loc = cv2.minMaxLoc(dist)
-        return {"x": int(max_loc[0]), "y": int(max_loc[1]), "source": "yolo_mask_distance_transform", "inner_dist": float(max_dist)}
+        for _ in range(10):
+            _, max_dist, _, max_loc = cv2.minMaxLoc(dist)
+            if max_dist <= 1:
+                break
+            add_candidate(int(max_loc[0]), int(max_loc[1]), stage="yolo_mask_clean_distance_transform", inner_dist=float(max_dist))
+            cv2.circle(dist, (int(max_loc[0]), int(max_loc[1])), max(20, int(round(min(h, w) * 0.04))), 0, -1)
 
     x1, y1, x2, y2 = instance["box"]
-    x = int(round((x1 + x2) / 2.0))
-    y = int(round((y1 + y2) / 2.0))
-    return {"x": max(0, min(w - 1, x)), "y": max(0, min(h - 1, y)), "source": "yolo_box_center", "inner_dist": 0.0}
+    cx = int(round((x1 + x2) / 2.0))
+    cy = int(round((y1 + y2) / 2.0))
+    add_candidate(cx, cy, stage="yolo_box_center_clean_checked", center_bias=0.08)
+
+    sx1, sy1, sx2, sy2 = shrink_box(x1, y1, x2, y2, img_w=w, img_h=h, shrink_ratio=0.18)
+    for x, y in generate_points_in_box(sx1, sy1, sx2, sy2, grid_size=3):
+        add_candidate(x, y, stage="yolo_box_clean_grid_candidate")
+
+    if candidates:
+        candidates.sort(key=lambda p: float(p.get("point_score", 0.0)), reverse=True)
+        return candidates[0]
+
+    return {"x": max(0, min(w - 1, cx)), "y": max(0, min(h - 1, cy)), "source": "yolo_box_center", "inner_dist": 0.0}
 
 
 def make_yolo_instance_mask_or_box(instance: Dict[str, Any], image_shape: Sequence[int]) -> np.ndarray:
@@ -1218,7 +1400,7 @@ def run_paper_from_yolo_only(
     }
 
     # 只是为了 debug_overlay 里还能画 paper 点
-    point = choose_one_point_inside_yolo_instance(instance, image_rgb.shape)
+    point = choose_one_point_inside_yolo_instance(instance, image_rgb)
     info["paper_point"] = point
 
     yolo_mask = make_yolo_instance_mask_or_box(instance, image_rgb.shape)
@@ -1301,7 +1483,7 @@ def run_sam2_for_paper_from_yolo(
         "area": int(instance["area"]),
     }
 
-    point = choose_one_point_inside_yolo_instance(instance, image_rgb.shape)
+    point = choose_one_point_inside_yolo_instance(instance, image_rgb)
     info["paper_point"] = point
 
     if detect_by_sam2:
@@ -1475,6 +1657,69 @@ def _component_summary(bin_mask: np.ndarray) -> Dict[str, int]:
         return {"component_count": 0, "largest_area": 0}
     areas = stats[1:, cv2.CC_STAT_AREA]
     return {"component_count": int(num_labels - 1), "largest_area": int(np.max(areas))}
+
+
+def _reference_mask_quality(mask: Optional[np.ndarray], image_shape: Sequence[int]) -> Dict[str, Any]:
+    src = (_binary_mask(mask) > 0).astype(np.uint8)
+    h, w = int(image_shape[0]), int(image_shape[1])
+    image_area = max(1, h * w)
+    area = int(src.sum())
+    info: Dict[str, Any] = {
+        "area_px": area,
+        "image_area_px": image_area,
+        "area_ratio": round(float(area / image_area), 8),
+        "usable": False,
+    }
+    if src.size == 0 or area <= 0:
+        info["reason"] = "empty_mask"
+        return info
+
+    ys, xs = np.where(src > 0)
+    bbox_w = int(xs.max() - xs.min() + 1)
+    bbox_h = int(ys.max() - ys.min() + 1)
+    summary = _component_summary(src)
+    largest_area = int(summary.get("largest_area") or 0)
+    largest_ratio = float(largest_area / image_area)
+    min_area = max(1200, int(round(image_area * 0.001)))
+    min_largest_area = max(900, int(round(image_area * 0.0008)))
+    min_bbox_side = 32
+
+    info.update(
+        {
+            "bbox_px": {
+                "x": int(xs.min()),
+                "y": int(ys.min()),
+                "width": bbox_w,
+                "height": bbox_h,
+            },
+            "component_count": int(summary.get("component_count") or 0),
+            "largest_component_area_px": largest_area,
+            "largest_component_area_ratio": round(largest_ratio, 8),
+            "min_area_px": min_area,
+            "min_largest_component_area_px": min_largest_area,
+            "min_bbox_side_px": min_bbox_side,
+        }
+    )
+
+    reasons: list[str] = []
+    if area < min_area:
+        reasons.append("area_too_small")
+    if largest_area < min_largest_area:
+        reasons.append("largest_component_too_small")
+    if min(bbox_w, bbox_h) < min_bbox_side:
+        reasons.append("bbox_too_small")
+
+    if reasons:
+        info["reason"] = ",".join(reasons)
+    else:
+        info["usable"] = True
+        info["reason"] = "ok"
+    return info
+
+
+def _is_reference_mask_usable(mask: Optional[np.ndarray], image_shape: Sequence[int]) -> tuple[bool, Dict[str, Any]]:
+    quality = _reference_mask_quality(mask, image_shape)
+    return bool(quality.get("usable")), quality
 
 
 def _finalize_plate_fill_mask(bin_mask: np.ndarray) -> np.ndarray:
@@ -2167,6 +2412,34 @@ def transform_points_px_to_mm(points_px: np.ndarray, H: np.ndarray) -> np.ndarra
     pts = np.asarray(points_px, dtype=np.float32).reshape(-1, 1, 2)
     out = cv2.perspectiveTransform(pts, H).reshape(-1, 2)
     return out.astype(np.float32)
+
+
+def _validate_reference_scaled_contour(contour_mm: np.ndarray, reference_info: Dict[str, Any]) -> Dict[str, Any]:
+    pts = np.asarray(contour_mm, dtype=np.float32).reshape(-1, 2)
+    min_xy = np.min(pts, axis=0)
+    max_xy = np.max(pts, axis=0)
+    bbox_w = float(max_xy[0] - min_xy[0])
+    bbox_h = float(max_xy[1] - min_xy[1])
+    max_dim = max(bbox_w, bbox_h)
+    min_dim = min(bbox_w, bbox_h)
+    info = {
+        "bbox_width_mm": round(bbox_w, 3),
+        "bbox_height_mm": round(bbox_h, 3),
+        "max_dim_mm": round(max_dim, 3),
+        "min_dim_mm": round(min_dim, 3),
+        "max_allowed_dim_mm": 100000.0,
+    }
+    reference_info["scaled_plate_sanity"] = info
+    if not np.all(np.isfinite(pts)):
+        raise RuntimeError("参考物标定异常：钢板换算坐标包含无效数值，请重新指定可靠的 A4 纸或 ChArUco 参考物")
+    if max_dim > 100000.0:
+        raise RuntimeError(
+            "参考物标定异常：A4 纸识别区域过小或四角错误，导致钢板尺寸被放大到不合理范围；"
+            f"当前估算外框约 {bbox_w:.0f} x {bbox_h:.0f} mm，请重新识别 A4 纸或手动指定 A4 纸点"
+        )
+    if max_dim <= 1e-6 or min_dim <= 1e-6:
+        raise RuntimeError("参考物标定异常：钢板换算尺寸无效，请重新指定可靠的 A4 纸或 ChArUco 参考物")
+    return info
 
 
 def simplify_contour_mm(contour_mm: np.ndarray, epsilon_mm: float) -> np.ndarray:
@@ -3239,30 +3512,46 @@ def process_one_image(args) -> Dict[str, Any]:
                 user_point_ratio=None,
             )
 
-        if paper_mask is not None and int((paper_mask > 0).sum()) > 0:
+        paper_mask_usable, paper_mask_quality = _is_reference_mask_usable(paper_mask, image_rgb.shape)
+        paper_info["mask_quality"] = paper_mask_quality
+        if paper_mask_usable:
             mask_paths["paper_mask"] = save_mask(paper_mask, run_dir / "paper_mask.png")
             reference_selection_info["selected_source"] = "a4"
             reference_selection_info["a4_method"] = paper_info.get("paper_mask_source") or args.paper_source
+            reference_selection_info["a4_mask_quality"] = paper_mask_quality
             logger.info(
-                "Paper mask ready: source={}, area_px={}, path={}",
+                "Paper mask ready: source={}, area_px={}, bbox={}, path={}",
                 args.paper_source,
-                int((paper_mask > 0).sum()),
+                paper_mask_quality.get("area_px"),
+                paper_mask_quality.get("bbox_px"),
                 mask_paths["paper_mask"],
             )
         else:
             yolo_or_sam2_paper_info = paper_info
+            if paper_mask is not None and int((_binary_mask(paper_mask) > 0).sum()) > 0:
+                mask_paths["paper_mask_rejected"] = save_mask(paper_mask, run_dir / "paper_mask_rejected.png")
+                logger.warning(
+                    "Paper mask rejected as unreliable: source={}, quality={}, path={}",
+                    args.paper_source,
+                    paper_mask_quality,
+                    mask_paths["paper_mask_rejected"],
+                )
             paper_mask, opencv_paper_info = detect_a4_paper_opencv(image_rgb)
             opencv_paper_info["yolo_or_sam2_fallback_info"] = yolo_or_sam2_paper_info
             paper_info = opencv_paper_info
-            if paper_mask is not None and int((paper_mask > 0).sum()) > 0:
+            opencv_mask_usable, opencv_mask_quality = _is_reference_mask_usable(paper_mask, image_rgb.shape)
+            opencv_paper_info["mask_quality"] = opencv_mask_quality
+            if opencv_mask_usable:
                 mask_paths["paper_mask"] = save_mask(paper_mask, run_dir / "paper_mask.png")
                 reference_selection_info["selected_source"] = "a4"
                 reference_selection_info["a4_method"] = "opencv"
                 reference_selection_info["a4_yolo_or_sam2_failure"] = yolo_or_sam2_paper_info
                 reference_selection_info["a4_opencv"] = opencv_paper_info
+                reference_selection_info["a4_mask_quality"] = opencv_mask_quality
                 logger.info(
-                    "OpenCV A4 fallback succeeded: area_px={}, score={}, path={}",
-                    int((paper_mask > 0).sum()),
+                    "OpenCV A4 fallback succeeded: area_px={}, bbox={}, score={}, path={}",
+                    opencv_mask_quality.get("area_px"),
+                    opencv_mask_quality.get("bbox_px"),
                     opencv_paper_info.get("selected_score"),
                     mask_paths["paper_mask"],
                 )
@@ -3270,10 +3559,12 @@ def process_one_image(args) -> Dict[str, Any]:
                 reference_selection_info["a4_failure"] = yolo_or_sam2_paper_info
                 reference_selection_info["a4_opencv_failure"] = opencv_paper_info
                 logger.error(
-                    "Reference detection failed: charuco={}, paper_info={}, opencv_info={}",
+                    "Reference detection failed: charuco={}, paper_info={}, opencv_info={}, rejected_quality={}, opencv_quality={}",
                     charuco_reference.failure_reason,
                     yolo_or_sam2_paper_info,
                     opencv_paper_info,
+                    paper_mask_quality,
+                    opencv_mask_quality,
                 )
                 raise RuntimeError(
                     "没有检测到可靠参考物：ChArUco 检测失败或角点不足，A4 纸检测也失败，OpenCV A4 兜底也未找到可靠四边形；"
@@ -3453,6 +3744,12 @@ def process_one_image(args) -> Dict[str, Any]:
         transform_points_px_to_mm(contour_px, H)
         for contour_px in plate_inner_contours_px
     ]
+    reference_scale_info = _validate_reference_scaled_contour(plate_contour_mm_raw, perspective_info)
+    logger.info(
+        "Reference scale sanity passed: bbox_width_mm={}, bbox_height_mm={}",
+        reference_scale_info.get("bbox_width_mm"),
+        reference_scale_info.get("bbox_height_mm"),
+    )
     dxf_target_x_mm = getattr(args, "dxf_target_x_mm", None)
     dxf_target_y_mm = getattr(args, "dxf_target_y_mm", None)
     dxf_target_size_1_mm = getattr(args, "dxf_target_size_1_mm", None)
